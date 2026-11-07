@@ -1,0 +1,4 @@
+export type Obj = Record<string, any> & {id:string};
+export type State={demoMetrics?:Record<string,any>;settings:Obj; accounts:Obj[];rules:Obj[];publications:Obj[];media:Obj[];artworks:Obj[];templates:Obj[];lives:Obj[];quiz:Obj|null;scores:Obj[];events:Obj[];jobs:Obj[];audit:Obj[];members:Obj[];stats:{revenue:number;donations:number;interactions:number;blocked:number};capabilities:Obj[]};
+export type Me={name:string;email:string|null;demo:boolean;workspace:string;role:string;user:string|null;has2fa:boolean;workspaces:Obj[];smtp:boolean;capabilities:Obj[]};
+export type Context={state:State;me:Me;refresh:()=>Promise<void>;notify:(message:string,error?:boolean)=>void;navigate:(page:string)=>void;run:(fn:()=>Promise<any>,message?:string)=>Promise<any>;audio:boolean;setAudio:(v:boolean)=>void;action:Obj|null};

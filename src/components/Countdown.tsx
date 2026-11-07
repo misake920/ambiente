@@ -1,0 +1,3 @@
+import { useEffect,useState } from 'react';
+import { Timer } from 'lucide-react';
+export default function Countdown({at}:{at?:string|null}){const [remaining,setRemaining]=useState(0);useEffect(()=>{if(!at)return;const tick=()=>setRemaining(Math.max(0,Math.ceil((new Date(at).getTime()-Date.now())/1000)));tick();const id=setInterval(tick,1000);return()=>clearInterval(id);},[at]);if(!at)return null;return <div className="countdown"><Timer size={15}/><span>{remaining>0?'COMEÇAMOS EM':'CHEGOU A HORA'}</span><strong>{[Math.floor(remaining/3600),Math.floor(remaining%3600/60),remaining%60].map(v=>String(v).padStart(2,'0')).join(':')}</strong></div>}

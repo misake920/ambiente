@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: 00-do-dark-api
+    runtime: docker
+    repo: https://github.com/misake920/ambiente
+    branch: main
+    region: ohio
+    plan: starter
+    numInstances: 1
+    autoDeployTrigger: off
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    disk:
+      name: dark-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: '3001'
+      - key: DATA_DIR
+        value: /data
+      - key: APP_ORIGIN
+        value: https://00-do-dark.vercel.app
+      - key: TRUST_PROXY
+        value: '1'
+      - key: DEMO_ENABLED
+        value: 'true'
+      - key: REGISTRATION_ENABLED
+        value: 'true'

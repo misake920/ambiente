@@ -1,0 +1,14 @@
+.git
+node_modules
+dist
+var
+.env
+.env.*
+!.env.example
+.vercel
+artifacts
+test-results
+playwright-report
+attachments
+tests
+*.log

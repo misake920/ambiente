@@ -1,0 +1,27 @@
+services:
+  backend:
+    build: .
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATA_DIR: /data
+      APP_ORIGIN: ${APP_ORIGIN:?Defina a origem HTTPS da interface Vercel}
+      TRUST_PROXY: ${TRUST_PROXY:-0}
+      DEMO_ENABLED: ${DEMO_ENABLED:-true}
+      REGISTRATION_ENABLED: ${REGISTRATION_ENABLED:-true}
+      YOUTUBE_CLIENT_ID: ${YOUTUBE_CLIENT_ID:-}
+      YOUTUBE_CLIENT_SECRET: ${YOUTUBE_CLIENT_SECRET:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+    ports:
+      - '127.0.0.1:${BACKEND_PORT:-3001}:3001'
+    volumes:
+      - dark-data:/data
+    stop_grace_period: 30s
+volumes:
+  dark-data:

@@ -1,0 +1,14 @@
+node_modules/
+dist/
+dist-preview/
+artifacts/
+.render/
+.env
+.env.*
+!.env.example
+var/
+playwright-report/
+test-results/
+*.log
+.vercel/
+.vercel-cli/
