@@ -25,3 +25,17 @@ test('the external chat setup issues a private key and accepts identified chat t
 test('a growing library paginates models and keeps at most six thumbnail renderers mounted',async({page})=>{
  await library(page);const state=await(await page.request.get('/api/state')).json();const created=await page.request.post('/api/live-models',{data:{...state.liveModels[0],name:'Modelo adicional E2E'}});expect(created.status()).toBe(201);await page.reload();await expect(page.locator('.library-count')).toContainText('7 modelos');await expect(page.locator('.model-card')).toHaveCount(6);await expect(page.locator('.model-card canvas')).toHaveCount(6);await page.getByRole('button',{name:'Próxima página de modelos',exact:true}).click();await expect(page.locator('.model-card')).toHaveCount(1);await expect(page.locator('.model-card canvas')).toHaveCount(1);await expect(page.locator('.library-pagination')).toContainText('página 2 de 2');
 });
+for(const viewport of [{width:1366,height:768},{width:390,height:844},{width:844,height:390}]){
+ test(`model modal stays inside the viewport and scrolls back to its beginning at ${viewport.width}x${viewport.height}`,async({page})=>{
+  await page.setViewportSize(viewport);await library(page);
+  expect((await page.request.post('/api/live-models/community-garden/start',{data:{}})).status()).toBe(201);await page.reload();
+  await page.getByRole('button',{name:'Visualizar Órbita dos presentes',exact:true}).click();const dialog=page.getByRole('dialog',{name:'Órbita dos presentes',exact:true});await expect(dialog).toBeVisible();
+  await expect.poll(async()=>{const b=await page.locator('.modal-backdrop').boundingBox();return b&&{x:Math.round(b.x),y:Math.round(b.y),width:Math.round(b.width),height:Math.round(b.height)};}).toEqual({x:0,y:0,...viewport});
+  const bounds=await dialog.boundingBox();expect(bounds!.y).toBeGreaterThanOrEqual(9);expect(bounds!.y+bounds!.height).toBeLessThanOrEqual(viewport.height-9);await expect(dialog.getByRole('button',{name:'Fechar',exact:true})).toBeInViewport();
+  const content=dialog.locator('.model-detail');await expect(content).toHaveJSProperty('scrollTop',0);const pageY=await page.evaluate(()=>scrollY);
+  await content.hover({position:{x:30,y:30}});await page.mouse.wheel(0,2400);await expect.poll(()=>content.evaluate(el=>el.scrollTop)).toBeGreaterThan(0);
+  await expect(dialog.getByRole('button',{name:'Personalizar',exact:true})).toBeInViewport();await expect(dialog.getByRole('button',{name:'Fechar',exact:true})).toBeInViewport();
+  await content.hover({position:{x:30,y:30}});await page.mouse.wheel(0,-4000);await expect.poll(()=>content.evaluate(el=>el.scrollTop)).toBe(0);expect(await page.evaluate(()=>scrollY)).toBe(pageY);await page.screenshot({path:`artifacts/modal-scroll/model-${viewport.width}x${viewport.height}-top.png`});
+  await dialog.getByRole('button',{name:'Fechar',exact:true}).click();await expect(dialog).toHaveCount(0);expect(await page.evaluate(()=>document.body.style.overflow)).toBe('');
+ });
+}

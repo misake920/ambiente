@@ -1,0 +1,30 @@
+/* Portals keep dialogs outside animated pages; only the content scrolls. */
+.modal-backdrop {
+ position: fixed;
+ inset: 0;
+ box-sizing: border-box;
+ background: #05070bd9;
+ padding: 16px;
+ overflow: hidden;
+}
+.modal-backdrop > .modal {
+ display: flex;
+ flex-direction: column;
+ min-height: 0;
+ max-height: calc(100dvh - 32px);
+ overflow: hidden;
+ margin: 0;
+}
+.modal-backdrop .modal-head { flex: 0 0 auto; }
+.modal-backdrop .modal > :not(.modal-head) {
+ min-height: 0;
+ overflow-y: auto;
+ overscroll-behavior-y: contain;
+ scrollbar-gutter: stable;
+ -webkit-overflow-scrolling: touch;
+}
+.modal-backdrop .model-detail { max-height: none; }
+@media (max-width: 720px) {
+ .modal-backdrop { padding: 10px; }
+ .modal-backdrop > .modal { max-height: calc(100dvh - 20px); }
+}
