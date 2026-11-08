@@ -6,6 +6,17 @@ const directory=process.env.PREVIEW_ARTIFACTS||'artifacts/visual/published-previ
 const browser=await chromium.launch({executablePath:'/usr/bin/chromium',args:['--no-sandbox','--disable-dev-shm-usage']});
 try{
  const page=await browser.newPage({viewport:{width:1586,height:992},locale:'pt-BR'}),errors=[],apiRequests=[];
+ // A cloud proxy CA may be trusted by Node but absent from Chromium's store.
+ // Verify HTTPS through the existing runtime trust, without changing browser
+ // trust or disabling certificate validation. Scope interception to this origin.
+ const tlsViaRuntime=process.env.PREVIEW_USE_RUNTIME_FETCH==='1';
+ if(tlsViaRuntime)await page.route(origin+'/**',async route=>{
+  if(route.request().method()!=='GET'){await route.abort();return;}
+  const response=await fetch(route.request().url(),{signal:AbortSignal.timeout(30000)});
+  const headers=Object.fromEntries(response.headers);
+  for(const key of ['content-encoding','content-length','transfer-encoding','connection'])delete headers[key];
+  await route.fulfill({status:response.status,headers,body:Buffer.from(await response.arrayBuffer())});
+ });
  page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/'))apiRequests.push(r.url());});
  await page.goto(origin);await page.waitForSelector('.dashboard-page');
  assert(await page.getByRole('status').getByText('PRÉVIA VISUAL',{exact:true}).isVisible());
@@ -22,6 +33,6 @@ try{
  assert(await page.getByRole('status').filter({hasText:'PRÉVIA VISUAL'}).isVisible());
  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
  assert.equal(apiRequests.length,0);assert.deepEqual(errors,[]);
- const result={origin,screens:5,mobile:true,mutationsBlocked:true,realAPIRequests:apiRequests.length,errors};
+ const result={origin,screens:5,mobile:true,mutationsBlocked:true,realAPIRequests:apiRequests.length,tlsViaRuntime,errors};
  writeFileSync(directory+'/validation.json',JSON.stringify(result,null,2)+'\n');console.log(JSON.stringify(result));
 }finally{await browser.close();}

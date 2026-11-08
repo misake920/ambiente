@@ -3,7 +3,7 @@ import {readdirSync,readFileSync,writeFileSync} from 'node:fs';
 import path from 'node:path';
 export type Project={projectId:string;orgId:string;projectName:string;domains:string[]};
 export function getProject():Project{return JSON.parse(readFileSync('.vercel/project.json','utf8'));}
-export async function deployDirectory(directory:string,mode:'visual-preview'|'application'){
+export async function deployDirectory(directory:string,mode:'visual-preview'|'application'|'backend-setup',settings?:Record<string,unknown>){
  if(!process.env.VERCEL_TOKEN)throw new Error('Conecte a conta Vercel no ambiente seguro.');
  const project=getProject(),query=project.orgId.startsWith('team_')?'?teamId='+encodeURIComponent(project.orgId):'';
  const request=async(route:string,init:RequestInit={})=>{
@@ -19,7 +19,7 @@ export async function deployDirectory(directory:string,mode:'visual-preview'|'ap
   files.push({file:path.relative(directory,filename).split(path.sep).join('/'),sha,size:bytes.length});
  }}
  await upload(directory);console.log(`${files.length} arquivos enviados à Vercel.`);
- const deployment=await (await request('/v13/deployments',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:project.projectName,project:project.projectId,target:'production',files,meta:{darkDeploymentMode:mode},projectSettings:{framework:null,buildCommand:null,installCommand:null,outputDirectory:null}})})).json();
+ const deployment=await (await request('/v13/deployments',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:project.projectName,project:project.projectId,target:'production',files,meta:{darkDeploymentMode:mode},projectSettings:settings||{framework:null,buildCommand:null,installCommand:null,outputDirectory:null}})})).json();
  if(!deployment.id||!deployment.url)throw new Error('A Vercel não confirmou o identificador do deploy.');
  const saved={id:deployment.id,url:deployment.url,mode};writeFileSync('.vercel/deployment.json',JSON.stringify(saved,null,2));
  console.log(`Deploy ${deployment.id} enviado; aguardando READY...`);

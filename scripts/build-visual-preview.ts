@@ -5,8 +5,8 @@ import {execFileSync} from 'node:child_process';
 
 // Export only a newly generated demo, never an existing workspace or database.
 const directory=mkdtempSync(path.join(tmpdir(),'dark-preview-'));
-process.env.DATA_DIR=directory;process.env.NODE_ENV='test';process.env.DEMO_ENABLED='true';
-for(const key of ['YOUTUBE_CLIENT_ID','YOUTUBE_CLIENT_SECRET','SMTP_HOST','SMTP_PASSWORD','ENCRYPTION_KEY'])process.env[key]='';
+process.env.DATA_DIR=directory;process.env.NODE_ENV='test';process.env.DEMO_ENABLED='true';process.env.POSTGRES_URL='';process.env.VERCEL='0';process.env.DARK_SERVERLESS='0';
+for(const key of ['YOUTUBE_CLIENT_ID','YOUTUBE_CLIENT_SECRET','TIKTOK_CLIENT_KEY','TIKTOK_CLIENT_SECRET','LIVEPIX_CLIENT_ID','LIVEPIX_CLIENT_SECRET','SMTP_HOST','SMTP_PASSWORD','ENCRYPTION_KEY','SUPABASE_URL','SUPABASE_SERVICE_ROLE_KEY','SUPABASE_SECRET_KEY','SUPABASE_ANON_KEY','SUPABASE_PUBLISHABLE_KEY','VITE_PUBLIC_SUPABASE_URL','VITE_PUBLIC_SUPABASE_ANON_KEY','NEXT_PUBLIC_SUPABASE_URL','NEXT_PUBLIC_SUPABASE_ANON_KEY'])process.env[key]='';
 const {app}=await import('../server/app.ts');
 const {db}=await import('../server/db.ts');
 const server=app.listen(0,'127.0.0.1');

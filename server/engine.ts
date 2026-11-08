@@ -63,7 +63,7 @@ export function recoverJobs(now = Date.now()) {
   const expired = db.prepare("SELECT * FROM jobs WHERE state='running' AND lease<?").all(now) as any[];
   for (const job of expired) {
     const state = job.type === 'publication' ? 'needs_review' : 'expired';
-    db.prepare('UPDATE jobs SET state=?, error=?, updated=? WHERE id=?').run(state, job.type === 'publication' ? 'Resultado remoto incerto. Verifique na plataforma antes de tentar novamente.' : 'Overlay não confirmou a execução. A ação não será repetida automaticamente.', now, job.id);
+    db.prepare("UPDATE jobs SET state=?, error=?, updated=? WHERE id=? AND state='running' AND lease<?").run(state, job.type === 'publication' ? 'Resultado remoto incerto. Verifique na plataforma antes de tentar novamente.' : 'Overlay não confirmou a execução. A ação não será repetida automaticamente.', now, job.id, now);
   }
 }
 export function claimInteraction(workspace: string) {

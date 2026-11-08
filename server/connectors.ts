@@ -5,12 +5,15 @@ import { db, get, put, log, dataDir } from './db.ts';
 import { decrypt, encrypt, hash } from './security.ts';
 import { origin } from './config.ts';
 import { ingest } from './engine.ts';
+import {linkConfigured,revokeTikTok} from './oauth-links.ts';
+import {materialize} from './cloud-storage.ts';
+import {serverless} from './runtime.ts';
 
 export const capabilities = () => [
  { id:'youtube', name:'YouTube', oauth:!!process.env.YOUTUBE_CLIENT_ID && !!process.env.YOUTUBE_CLIENT_SECRET, publishing:true, chat:true, transmission:false, description:'OAuth oficial, upload de vídeos e leitura do chat de uma live ativa. Requer projeto Google e consentimento aprovado.', docs:'https://developers.google.com/youtube/v3' },
- { id:'tiktok', name:'TikTok', oauth:false, publishing:false, chat:false, transmission:false, description:'Fluxo assistido disponível. A publicação direta exige Content Posting API e aprovação do aplicativo; conector automático ainda não habilitado.', docs:'https://developers.tiktok.com/doc/content-posting-api-get-started' },
+ { id:'tiktok', name:'TikTok', oauth:linkConfigured('tiktok'), linking:true, publishing:false, chat:false, transmission:false, description:'Vinculação oficial por link com Login Kit. Autoriza a identidade da conta; chat e transmissão LIVE exigem acesso próprio e não são liberados por esse login. Publicação direta exige aprovação separada.', docs:'https://developers.tiktok.com/doc/login-kit-web' },
  { id:'kwai', name:'Kwai', oauth:false, publishing:false, chat:false, transmission:false, description:'Fluxo assistido disponível. Acesso parceiro e documentação aplicável precisam ser confirmados antes de habilitar automação.', docs:'https://www.kwai.com/' },
- { id:'livepix', name:'LivePix', oauth:false, publishing:false, chat:false, transmission:false, description:'Simulador de eventos disponível. Recebimento real aguarda validação do contrato oficial da API e credenciais; nenhum pagamento é presumido.', docs:'https://docs.livepix.gg' },
+ { id:'livepix', name:'LivePix', oauth:linkConfigured('livepix'), linking:true, publishing:false, chat:false, transmission:false, payments:false, description:'Vinculação de identidade por OAuth oficial disponível quando o aplicativo é configurado. Recebimento real de pagamentos ainda não está habilitado.', docs:'https://docs.livepix.gg/api' },
 ];
 export function youtubeStart(workspace: string, user: string | null) {
  if (!capabilities()[0].oauth) throw Object.assign(new Error('Configure YOUTUBE_CLIENT_ID e YOUTUBE_CLIENT_SECRET no servidor para conectar sua conta.'),{status:409});
@@ -48,27 +51,30 @@ export async function youtubeToken(workspace:string, account:any) {
  } catch(e) { put(workspace,'account',{status:'expired'},account.id);throw e; }
 }
 export async function revoke(workspace:string,account:any) {
+ if(account.platform==='tiktok')await revokeTikTok(account);
  if(account.tokens && account.platform==='youtube') { const token=JSON.parse(decrypt(account.tokens));await checked('https://oauth2.googleapis.com/revoke',{method:'POST',body:new URLSearchParams({token:token.refresh_token||token.access_token})}); }
 }
 export async function publishYouTube(workspace:string,account:any,publication:any,jobId:string) {
  const media=get(workspace,'media',publication.mediaId);
  if(!media) throw new Error('Vídeo não encontrado.');
  const token=await youtubeToken(workspace,account);
- const file=path.join(dataDir,'media',media.filename);
+ const local=await materialize(media),file=local.filename;
+ try{
  const init=await checked('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json','X-Upload-Content-Length':String(statSync(file).size),'X-Upload-Content-Type':media.mime},body:JSON.stringify({snippet:{title:publication.title,description:publication.description+'\n'+publication.hashtags.map((t:string)=>'#'+t).join(' '),tags:publication.hashtags,categoryId:'22'},status:{privacyStatus:publication.visibility||'private',selfDeclaredMadeForKids:false}})});
  const location=init.headers.get('location');
  if(!location || !['www.googleapis.com','youtube.googleapis.com'].includes(new URL(location).hostname)) throw new Error('Sessão de upload não recebida.');
  const job=db.prepare('SELECT data FROM jobs WHERE id=? AND workspace=?').get(jobId,workspace) as any;
  db.prepare('UPDATE jobs SET data=? WHERE id=?').run(JSON.stringify({...JSON.parse(job.data),uploadSession:encrypt(location)}),jobId);
  // No automatic retry after bytes are sent: uncertain outcomes must be reconciled manually.
- const uploaded=await fetch(location,{method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':media.mime,'Content-Length':String(statSync(file).size)},body:createReadStream(file) as any,duplex:'half',signal:AbortSignal.timeout(600000)} as any);
+ const uploaded=await fetch(location,{method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':media.mime,'Content-Length':String(statSync(file).size)},body:createReadStream(file) as any,duplex:'half',signal:AbortSignal.timeout(serverless?180000:600000)} as any);
  if(!uploaded.ok) throw new Error(`Upload respondeu HTTP ${uploaded.status}. Verifique o YouTube Studio antes de repetir.`);
  const video=await uploaded.json(); if(!video.id) throw new Error('YouTube não confirmou o identificador do vídeo.');
  const remote={remoteId:video.id,url:`https://www.youtube.com/watch?v=${video.id}`};
  db.prepare('UPDATE jobs SET data=? WHERE id=?').run(JSON.stringify({...JSON.parse(job.data),...remote}),jobId);
  let coverWarning:string|undefined;
- if(publication.coverId){const artwork=get(workspace,'artwork',publication.coverId);if(artwork){try{const r=await fetch('https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId='+encodeURIComponent(video.id),{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':artwork.mime},body:createReadStream(path.join(dataDir,'media',artwork.filename)) as any,duplex:'half',signal:AbortSignal.timeout(30000)} as any);if(!r.ok)coverWarning=`Vídeo enviado, mas a capa respondeu HTTP ${r.status}. Verifique elegibilidade da conta para miniaturas personalizadas.`;}catch{coverWarning='Vídeo enviado. Não foi possível confirmar a capa personalizada.';}}}
+ if(publication.coverId){const artwork=get(workspace,'artwork',publication.coverId);if(artwork){let cover;try{cover=await materialize(artwork);const r=await fetch('https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId='+encodeURIComponent(video.id),{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':artwork.mime},body:createReadStream(cover.filename) as any,duplex:'half',signal:AbortSignal.timeout(serverless?10000:30000)} as any);if(!r.ok)coverWarning=`Vídeo enviado, mas a capa respondeu HTTP ${r.status}. Verifique elegibilidade da conta para miniaturas personalizadas.`;}catch{coverWarning='Vídeo enviado. Não foi possível confirmar a capa personalizada.';}finally{await cover?.cleanup();}}}
  return {...remote,coverWarning};
+ }finally{await local.cleanup();}
 }
 export async function pollYouTube(workspace:string,account:any) {
  const token=await youtubeToken(workspace,account);

@@ -6,6 +6,7 @@ export const hash = (v: string) => createHash('sha256').update(v).digest('hex');
 export function passwordHash(password: string) { const salt = randomBytes(16).toString('hex'); return salt + ':' + scryptSync(password, salt, 64).toString('hex'); }
 export function checkPassword(password: string, stored: string) { const [salt, key] = stored.split(':'); if (!key) return false; return timingSafeEqual(scryptSync(password, salt, 64), Buffer.from(key, 'hex')); }
 const keyPath = path.join(dataDir, 'encryption.key');
+if((process.env.VERCEL==='1'||process.env.DARK_SERVERLESS==='1')&&!process.env.ENCRYPTION_KEY)throw new Error('Configure uma ENCRYPTION_KEY permanente antes de iniciar o backend sem disco persistente.');
 if (!process.env.ENCRYPTION_KEY && !existsSync(keyPath)) writeFileSync(keyPath, randomBytes(32).toString('hex'), { mode: 0o600 });
 const key = Buffer.from(process.env.ENCRYPTION_KEY || readFileSync(keyPath, 'utf8').trim(), 'hex');
 if (key.length !== 32) throw new Error('ENCRYPTION_KEY precisa de 64 caracteres hexadecimais.');
