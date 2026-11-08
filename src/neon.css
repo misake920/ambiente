@@ -375,3 +375,34 @@ body { background: var(--bg); }
     box-shadow: inset 0 1px 0 #e7b9ff0d, 0 0 16px #a13bf01a;
   }
 }
+
+/* Live metrics keep their source visible, including unavailable and partial data. */
+.professional .metrics-grid { margin-bottom: 10px; }
+.professional .metric > small { display: flex; align-items: center; gap: 6px; min-height: 17px; line-height: 1.45; }
+.professional .metric-source-dot, .professional .chart-live-dot { display: inline-block; width: 5px; height: 5px; flex-shrink: 0; border-radius: 50%; background: #9879aa; }
+.professional .metric-available .metric-source-dot { background: #83eda9; box-shadow: 0 0 7px #83eda94a; }
+.professional .metric-partial .metric-source-dot { background: #f0c477; }
+.professional .metric-unavailable > strong, .professional .metric-stale > strong { color: #c7acd9; }
+.professional .metric > .metric-partial { position: absolute; top: 46px; right: 15px; font-size: 9px; color: #f0c477; }
+.professional .metrics-scope { display: flex; justify-content: space-between; gap: 8px 24px; flex-wrap: wrap; color: #a991bd; font-size: 10px; line-height: 1.6; margin: 0 1px 20px; }
+.professional .metrics-scope > span:last-child { color: #c4a1dd; }
+.professional .real-revenue { background: radial-gradient(ellipse at 35% 100%, #7121ad1c, transparent 65%), linear-gradient(140deg, #20152ceb, #130d1ef5 80%); }
+.professional .real-revenue .chart-total { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 15px; margin: 0 20px 3px; }
+.professional .real-revenue .chart-total > span { color: #b7a0cb; font-size: 10px; }
+.professional .real-revenue .chart-live-dot { background: #cb7bff; box-shadow: 0 0 8px #be4cff88; }
+.professional .real-revenue .chart { height: 235px; padding-right: 8px; }
+.professional .neon-revenue-chart:focus { outline: none; }
+.professional .neon-revenue-chart .recharts-surface { overflow: visible; }
+.professional .real-revenue .chart-bottom { border-color: #6c43834d; margin: 0 20px; gap: 12px; color: #ac92be; font-size: 10px; }
+.professional .real-revenue .chart-bottom > span { font-size: 10px; line-height: 1.5; }
+@media(max-width:720px) {
+ .professional .metric { min-height: 129px; }
+ .professional .metric > small { font-size: 9px; align-items: flex-start; }
+ .professional .metric-source-dot { margin-top: 4px; }
+ .professional .metric-label { font-size: 10px; }
+ .professional .metrics-scope { font-size: 9px; margin-bottom: 16px; }
+ .professional .real-revenue .chart { height: 220px; }
+ .professional .real-revenue .chart-total { margin: 0 16px 3px; }
+ .professional .real-revenue .chart-total > span { font-size: 9px; }
+ .professional .real-revenue .chart-bottom { margin: 0 16px; flex-wrap: wrap; }
+}

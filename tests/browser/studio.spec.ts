@@ -16,9 +16,27 @@ test('starts at login and an actual new account has no fabricated activity',asyn
  await expect(page.getByText('R$ 1.284,00',{exact:true})).toHaveCount(0);await expect(page.getByText('Demonstração',{exact:true})).toHaveCount(0);
  const state=await (await page.request.get('/api/state')).json();expect(state.accounts).toHaveLength(0);expect(state.events).toHaveLength(0);expect(state.stats.revenue).toBe(0);expect(state.stats.interactions).toBe(0);expect(state.lives).toHaveLength(0);
  expect(await page.locator('h1').evaluate((h:HTMLElement)=>parseFloat(getComputedStyle(h).fontSize))).toBeLessThanOrEqual(26);
+ for(const label of ['Visualizações','Curtidas','Presentes enviados','Valor recebido'])await expect(page.locator('.metrics-grid .metric-label').filter({hasText:label})).toHaveCount(1);
+ await expect(page.locator('.metrics-grid .metric > strong')).toHaveText(['—','—','—','R$ 0,00']);
+ await expect(page.getByRole('img',{name:/Gráfico neon da receita confirmada/})).toBeVisible();
+ await expect(page.locator('.neon-revenue-chart')).toHaveAttribute('data-total','0');
+ expect(state.dashboard.revenue.points.every((p:any)=>p.amount===0)).toBeTruthy();expect(state.dashboard.audience.views.value).toBeNull();
  await page.screenshot({path:'test-results/dashboard-professional.png',fullPage:true});
  for(const [label,selector] of [[/Interações/,'.automation-editor'],[/Publicações/,'.week-calendar'],[/Contas e integrações|Contas$/,'.accounts-table-panel'],[/Central de lives/,'.camera-preview'],[/Relatórios/,'.data-table'],[/Configurações/,'.settings-layout']] as [RegExp,string][]){await nav(page,label);await expect(page.locator(selector)).toBeVisible();}
  await page.getByRole('button',{name:'Abrir notificações'}).click();await expect(page.locator('.notification-dropdown')).toBeVisible();expect(errors).toEqual([]);
+});
+test('dashboard formats supplied live metrics and preserves the actual revenue series',async({page})=>{
+ await start(page);const state=await(await page.request.get('/api/state')).json(),now=Date.now();
+ const metric=(value:number)=>({value,status:'available',reason:'YouTube · lives ativas',updatedAt:now});
+ // Controlled API fixture only in this browser; never writes simulated activity into the app.
+ state.dashboard={audience:{views:metric(1234),likes:metric(72),gifts:metric(9),activeLives:1},revenue:{total:5250,updatedAt:now,points:Array.from({length:9},(_,i)=>({at:now-86400000+i*10800000,amount:i*650+(i===8?50:0)}))}};
+ await page.route('**/api/state',route=>route.fulfill({json:state}));await page.reload();
+ await expect(page.locator('.metrics-grid .metric > strong')).toHaveText(['1.234','72','9','R$ 52,50']);
+ await expect(page.locator('.neon-revenue-chart')).toHaveAttribute('data-total','5250');
+ await expect(page.locator('.real-revenue .chart-total > strong')).toHaveText('R$ 52,50');
+ await expect(page.locator('.neon-revenue-chart .recharts-area-curve')).toHaveAttribute('stroke','#d184ff');
+ await expect(page.locator('.neon-revenue-chart filter')).toHaveAttribute('filterUnits','userSpaceOnUse');
+ await page.emulateMedia({reducedMotion:'reduce'});expect(await page.evaluate(()=>matchMedia('(prefers-reduced-motion: reduce)').matches)).toBeTruthy();
 });
 test('rule changes persist and an explicit test is executed once without inflating revenue',async({page})=>{
  await start(page);await nav(page,/Interações/);await page.getByRole('button',{name:'Nova automação',exact:true}).click();await page.getByRole('button',{name:'Exibir alerta',exact:true}).click();await page.getByRole('button',{name:'Regra',exact:true}).click();await page.getByLabel('Nome da automação').fill('Saudação E2E');await page.getByLabel(/Valor mínimo/).fill('12');await page.getByRole('button',{name:'Salvar fluxo',exact:true}).click();await expect(page.getByText('Automação salva.',{exact:true})).toBeVisible();await page.reload();await page.getByLabel('Selecionar automação').selectOption({label:'Automação: Saudação E2E'});await page.getByRole('button',{name:'Testar interação',exact:true}).click();await page.getByLabel('Nome do participante').fill('Pessoa E2E');await page.getByRole('button',{name:'Enviar teste para a fila'}).click();await expect(page.locator('.interaction-toast')).toContainText('Pessoa E2E',{timeout:10000});

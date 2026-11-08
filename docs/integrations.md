@@ -2,7 +2,7 @@
 
 ## YouTube
 
-Recursos conferidos no documento oficial de descoberta Google (consulta de 07/11/2026): `channels.list`, `videos.insert` com upload resumível, `liveBroadcasts.list`, `liveChatMessages.list`; escopos `youtube.readonly` e `youtube.upload`. O login usa OAuth authorization code com PKCE, state de uso único vinculado ao usuário/workspace e consentimento offline. Tokens são armazenados cifrados, sem exposição na API do frontend.
+Recursos conferidos no documento oficial de descoberta Google (consulta de 08/11/2026): `channels.list`, `videos.insert` com upload resumível, `liveBroadcasts.list`, `videos.list` (`statistics`, `liveStreamingDetails`), `liveChatMessages.list`; escopos `youtube.readonly` e `youtube.upload`. O login usa OAuth authorization code com PKCE, state de uso único vinculado ao usuário/workspace e consentimento offline. Tokens são armazenados cifrados, sem exposição na API do frontend.
 
 Para operar:
 1. Criar um projeto Google Cloud e habilitar YouTube Data API v3.
@@ -16,6 +16,13 @@ O conector **não foi exercitado com credenciais reais** nesta entrega. A descob
 Uploads obtêm sessão resumível antes de enviar bytes. Erros transitórios antes da sessão podem ser reagendados com espera exponencial, no máximo três tentativas. Após criar a sessão, um resultado incerto exige revisão manual em vez de repetir o envio. Reinícios não reapresentam uploads incertos como concluídos. O painel só marca conclusão automática com ID retornado pelo YouTube. A visibilidade padrão é privada.
 
 O chat só é lido de transmissões ativas acessíveis pela conta autorizada. O conector respeita o intervalo mínimo informado pela API, com piso de 10 segundos, e aguarda 60 segundos ao não encontrar live ou encontrar falha. Não há envio automático de mensagens ao chat.
+
+A Visão geral soma `statistics.viewCount` e `statistics.likeCount` das transmissões ativas das contas YouTube autorizadas, deduplicando o ID do vídeo. Visualizações representam reproduções acumuladas da live, não espectadores simultâneos. As métricas são consultadas mesmo com a leitura de chat desligada. A descoberta de transmissões é renovada a cada minuto; estatísticas, no mínimo a cada 30 segundos. Dados ausentes ou com mais de três minutos sem atualização não viram zero. A interface identifica falta de conexão, indisponibilidade e somas parciais.
+
+“Presentes enviados” contabiliza os eventos capturados pelo chat da live ativa: `membershipGiftingEvent` (quantidade de assinaturas compradas), `superStickerEvent` (um sticker) e `giftEvent` (quantidade `comboCount` informada pela API). Avisos `giftMembershipReceivedEvent` dos destinatários são ignorados para não duplicar a compra. A deduplicação usa o ID da mensagem. O indicador representa os presentes observados pela integração, não uma reconciliação de todo o histórico anterior à conexão. Não converte presentes, joias, Super Chats ou moedas em receita BRL. A contagem depende de leitura de chat autorizada e disponível.
+
+O gráfico neon fica visível mesmo sem pagamentos, com uma linha em zero e legenda explícita. A série de 24 horas é agregada no banco, sem a limitação dos 500 eventos do feed, e exclui testes, pagamentos pendentes e eventos de outros workspaces. “Valor recebido” usa exatamente o mesmo total de doações confirmadas. A API inclui a série e a disponibilidade de cada métrica em `/api/state`.
+
 
 ## LivePix
 

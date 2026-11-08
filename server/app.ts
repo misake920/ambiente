@@ -26,6 +26,7 @@ import {registerCloudSetup} from './cloud-setup.ts';
 import {connectLivePix,disconnectLivePix} from './livepix.ts';
 import {syncWorkspace} from './integration-sync.ts';
 import {saveOAuth} from './connector-config.ts';
+import {revenueSeries,audienceMetrics} from './analytics.ts';
 
 declare global { namespace Express { interface Request { auth: { user: string | null; workspace: string; demo: boolean; role: string; name: string; email: string | null }; } } }
 export const app=express();
@@ -139,8 +140,9 @@ app.get('/api/state',requireAuth,async(req,res)=>{
  const w=req.auth.workspace,config=settings(w),allEvents=(db.prepare('SELECT * FROM events WHERE workspace=? ORDER BY created DESC LIMIT 500').all(w) as any[]).map(e=>({...e,data:JSON.parse(e.data)}));
  const financialTotals=db.prepare("SELECT COALESCE(SUM(json_extract(data,'$.amount')),0) as revenue,COUNT(*) as donations FROM events WHERE workspace=? AND kind='donation' AND json_extract(data,'$.confirmed')=1 AND (?=1 OR is_test=0)").get(w,0) as any;
  const members=db.prepare('SELECT u.id,u.name,u.email,m.role FROM members m JOIN users u ON u.id=m.user WHERE m.workspace=?').all(w);
+ const revenue=revenueSeries(w),audience=audienceMetrics(w);
  res.json({demoMetrics:req.auth.demo?list(w,'demo-metrics')[0]:undefined,runtime:{polling:serverless,uploads:cloudStorageConfigured()?'signed':'local',maxUploadBytes:cloudStorageConfigured()?cloudMediaLimit:512*1024*1024,overlayConnected},settings:config,accounts:list(w,'account').map(publicAccount),integrations:list(w,'integration').map(publicAccount),rules:list(w,'rule'),publications:list(w,'publication'),media:list(w,'media'),artworks:list(w,'artwork'),templates:list(w,'template'),lives:list(w,'live'),quiz:list(w,'quiz')[0]||null,scores:list(w,'score'),events:allEvents,jobs:jobs(w),audit:db.prepare('SELECT * FROM audit WHERE workspace=? ORDER BY created DESC LIMIT 50').all(w),members,
-  stats:{revenue:financialTotals.revenue,donations:financialTotals.donations,todayRevenue:db.prepare("SELECT COALESCE(SUM(json_extract(data,'$.amount')),0) AS total FROM events WHERE workspace=? AND kind='donation' AND is_test=0 AND json_extract(data,'$.confirmed')=1 AND created>=?").get(w,Date.now()-86400000).total,chatMessages:db.prepare("SELECT COUNT(*) AS total FROM events WHERE workspace=? AND kind='chat' AND is_test=0").get(w).total,interactions:db.prepare("SELECT COUNT(*) AS total FROM jobs WHERE workspace=? AND type='interaction' AND state='completed' AND CAST(json_extract(data,'$.isTest') AS TEXT) IN ('false','0')").get(w).total,blocked:allEvents.filter(e=>!e.is_test&&e.data.status==='blocked').length},capabilities:capabilities(req.auth.workspace)});
+  dashboard:{revenue,audience},stats:{revenue:financialTotals.revenue,donations:financialTotals.donations,todayRevenue:revenue.total,chatMessages:db.prepare("SELECT COUNT(*) AS total FROM events WHERE workspace=? AND kind='chat' AND is_test=0").get(w).total,interactions:db.prepare("SELECT COUNT(*) AS total FROM jobs WHERE workspace=? AND type='interaction' AND state='completed' AND CAST(json_extract(data,'$.isTest') AS TEXT) IN ('false','0')").get(w).total,blocked:allEvents.filter(e=>!e.is_test&&e.data.status==='blocked').length},capabilities:capabilities(req.auth.workspace)});
 });
 
 app.post('/api/connectors/:provider',requireAuth,owner,(req,res)=>{

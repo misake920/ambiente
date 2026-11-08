@@ -11,7 +11,7 @@ import {serverless} from './runtime.ts';
 import {oauthConfig,hasOAuth} from './connector-config.ts';
 
 export const capabilities = (workspace?:string) => [
- { id:'youtube', name:'YouTube', oauth:hasOAuth('youtube',workspace), publishing:true, chat:true, transmission:false, description:'OAuth oficial, upload de vídeos e leitura do chat de uma live ativa. Requer projeto Google e consentimento aprovado.', docs:'https://developers.google.com/youtube/v3' },
+ { id:'youtube', name:'YouTube', oauth:hasOAuth('youtube',workspace), publishing:true, chat:true, transmission:false, description:'OAuth oficial, upload de vídeos, chat e métricas de lives ativas. Presentes são contabilizados quando recebidos pelo chat. Requer projeto Google e consentimento aprovado.', docs:'https://developers.google.com/youtube/v3' },
  { id:'tiktok', name:'TikTok', oauth:linkConfigured('tiktok',workspace), linking:true, publishing:false, chat:false, transmission:false, description:'Vinculação oficial por link com Login Kit. Autoriza a identidade da conta; chat e transmissão LIVE exigem acesso próprio e não são liberados por esse login. Publicação direta exige aprovação separada.', docs:'https://developers.tiktok.com/doc/login-kit-web' },
  { id:'kwai', name:'Kwai', oauth:false, publishing:false, chat:false, transmission:false, description:'Fluxo assistido disponível. Acesso parceiro e documentação aplicável precisam ser confirmados antes de habilitar automação.', docs:'https://www.kwai.com/' },
  { id:'livepix', name:'LivePix', oauth:linkConfigured('livepix',workspace), linking:true, publishing:false, chat:false, transmission:false, payments:true, credentials:true, description:'Consulta autenticada de pagamentos e mensagens, com deduplicação. Conecte as credenciais da sua aplicação LivePix.', docs:'https://docs.livepix.gg/api' },
@@ -78,16 +78,60 @@ export async function publishYouTube(workspace:string,account:any,publication:an
  }finally{await local.cleanup();}
 }
 export async function pollYouTube(workspace:string,account:any) {
- const token=await youtubeToken(workspace,account);
- let chatId=account.liveChatId;
- if(!chatId) {
-  const b=await (await checked('https://www.googleapis.com/youtube/v3/liveBroadcasts?part=snippet&broadcastStatus=active&broadcastType=all',{headers:{Authorization:`Bearer ${token}`}})).json();
-  chatId=b.items?.find((i:any)=>i.snippet?.liveChatId)?.snippet.liveChatId;
-  if(!chatId) return {next:60000};
+ const token=await youtubeToken(workspace,account),now=Date.now(),headers={Authorization:`Bearer ${token}`};
+ let broadcasts:any[]=account.liveMetrics?.broadcasts||[],discoveredAt=account.liveDiscoveryAt||0;
+ if(now-discoveredAt>=60000||!account.liveMetrics){
+  const discovered:any[]=[];let page:string|undefined;
+  do{
+   const params=new URLSearchParams({part:'snippet',broadcastStatus:'active',broadcastType:'all',maxResults:'50'});if(page)params.set('pageToken',page);
+   const result=await (await checked('https://www.googleapis.com/youtube/v3/liveBroadcasts?'+params,{headers})).json();
+   for(const item of result.items||[]){
+    if(!item.id||item.snippet?.channelId!==account.externalId)continue;
+    const previous=broadcasts.find(l=>l.id===item.id);
+    discovered.push({...previous,id:item.id,title:item.snippet.title,chatId:item.snippet.liveChatId||null});
+   }
+   page=result.nextPageToken;
+  }while(page);
+  broadcasts=discovered;discoveredAt=now;
  }
- const params=new URLSearchParams({liveChatId:chatId,part:'snippet,authorDetails',maxResults:'200'});if(account.chatPage) params.set('pageToken',account.chatPage);
- const response=await (await checked('https://www.googleapis.com/youtube/v3/liveChat/messages?'+params,{headers:{Authorization:`Bearer ${token}`}})).json();
- for(const message of response.items||[]) ingest(workspace,{externalId:message.id,provider:'youtube',kind:'chat',user:message.authorDetails?.displayName||'Participante',message:message.snippet?.displayMessage||'',amount:0,confirmed:true,isTest:false});
- put(workspace,'account',{liveChatId:chatId,chatPage:response.nextPageToken},account.id);
- return {next:Math.max(10000,response.pollingIntervalMillis||10000)};
+ const unmeasured=broadcasts.filter(l=>!l.updatedAt||now-l.updatedAt>=30000);
+ const number=(value:unknown)=>{const n=typeof value==='string'&&/^\d+$/.test(value)?Number(value):NaN;return Number.isSafeInteger(n)&&n>=0?n:null;};
+ const ended=new Set<string>();
+ for(let offset=0;offset<unmeasured.length;offset+=50){
+  const ids=unmeasured.slice(offset,offset+50).map(l=>l.id);
+  const result=await (await checked('https://www.googleapis.com/youtube/v3/videos?'+new URLSearchParams({id:ids.join(','),part:'statistics,liveStreamingDetails'}),{headers})).json();
+  for(const live of broadcasts.filter(l=>ids.includes(l.id))){
+   const video=result.items?.find((v:any)=>v.id===live.id);
+   if(!video||video.liveStreamingDetails?.actualEndTime){ended.add(live.id);continue;}
+   Object.assign(live,{views:number(video.statistics?.viewCount),likes:number(video.statistics?.likeCount),concurrentViewers:number(video.liveStreamingDetails?.concurrentViewers),updatedAt:now});
+  }
+ }
+ broadcasts=broadcasts.filter(l=>!ended.has(l.id));
+ let next=30000,warning:string|null=null;
+ if(account.chatEnabled)for(const live of broadcasts){
+  if(!live.chatId)continue;
+  if(live.chatNextAt>now){next=Math.min(next,Math.max(10000,live.chatNextAt-now));continue;}
+  try{
+   const params=new URLSearchParams({liveChatId:live.chatId,part:'snippet,authorDetails',maxResults:'200'});if(live.chatPage)params.set('pageToken',live.chatPage);
+   const response=await (await checked('https://www.googleapis.com/youtube/v3/liveChat/messages?'+params,{headers})).json();
+   for(const message of response.items||[]){
+    if(!message.id)continue;
+    const snippet=message.snippet||{},type=snippet.type;
+    // Recipient notices are separate from the purchased gift batch: do not count them twice.
+    if(type==='giftMembershipReceivedEvent')continue;
+    const quantity=type==='membershipGiftingEvent'?snippet.membershipGiftingDetails?.giftMembershipsCount:type==='superStickerEvent'?1:type==='giftEvent'?(snippet.giftDetails?.comboCount||1):null;
+    const gift=Number.isSafeInteger(quantity)&&quantity>0;
+    if(!gift&&!['textMessageEvent','superChatEvent','memberMilestoneChatEvent'].includes(type))continue;
+    ingest(workspace,{externalId:message.id,provider:'youtube',kind:gift?'gift':'chat',user:message.authorDetails?.displayName||'Participante',message:snippet.displayMessage||snippet.giftDetails?.giftName||'',amount:0,confirmed:true,isTest:false,liveId:live.id,...(gift?{giftQuantity:quantity,giftType:type}:{})});
+   }
+   const interval=Math.max(10000,response.pollingIntervalMillis||10000);
+   Object.assign(live,{chatPage:response.nextPageToken||null,chatSyncedAt:now,chatNextAt:now+interval});next=Math.min(next,interval);
+  }catch(error:any){
+   if(error.remoteStatus===401)throw error;
+   live.chatSyncedAt=null;live.chatNextAt=now+60000;
+   warning='Métricas atualizadas, mas não foi possível ler o chat. '+error.message;
+  }
+ }
+ put(workspace,'account',{liveDiscoveryAt:discoveredAt,liveMetrics:{checkedAt:now,broadcasts},liveChatId:broadcasts[0]?.chatId||null,chatPage:null},account.id);
+ return {next:broadcasts.length?next:60000,warning};
 }

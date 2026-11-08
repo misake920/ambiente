@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { db, list, put, settings, transaction, log } from './db.ts';
-export type IncomingEvent = { externalId: string; provider: string; kind: 'donation' | 'chat' | 'follow'; user: string; message: string; amount: number; confirmed: boolean; isTest: boolean; ruleId?: string; blockedReason?:string; receivedAt?:number };
+export type IncomingEvent = { externalId: string; provider: string; kind: 'donation' | 'chat' | 'follow' | 'gift'; user: string; message: string; amount: number; confirmed: boolean; isTest: boolean; ruleId?: string; blockedReason?:string; receivedAt?:number;liveId?:string;giftQuantity?:number;giftType?:string };
 const normalize = (text: string) => text.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 export function moderate(message: string, config: any): string | null {
   if (message.length > config.maxLength) return 'Mensagem excede o limite de caracteres.';
@@ -55,7 +55,7 @@ export function ingest(workspace: string, input: IncomingEvent) {
       }, now, config.manualApproval ? 'awaiting_approval' : 'queued'));
       if (!rule.stack) break;
     }
-    log(workspace, `${input.isTest ? '[Teste] ' : ''}${input.kind === 'donation' ? 'Doação recebida' : 'Mensagem recebida'}: ${input.user}. ${actions.length} ação(ões) na fila.`);
+    log(workspace, `${input.isTest ? '[Teste] ' : ''}${input.kind === 'donation' ? 'Doação recebida' : input.kind==='gift'?'Presente recebido':'Mensagem recebida'}: ${input.user}. ${actions.length} ação(ões) na fila.`);
     return { duplicate: false, actions };
   });
 }

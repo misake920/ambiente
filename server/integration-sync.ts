@@ -2,7 +2,7 @@ import {list,put,acquireLease,extendLease,log} from './db.ts';
 import {pollLivePix} from './livepix.ts';
 import {pollYouTube} from './connectors.ts';
 export async function syncWorkspace(workspace:string){
- const providers=[...list(workspace,'integration').filter(a=>a.platform==='livepix'&&a.paymentsEnabled),...list(workspace,'account').filter(a=>a.platform==='youtube'&&a.chatEnabled&&!a.isDemo)];
+ const providers=[...list(workspace,'integration').filter(a=>a.platform==='livepix'&&a.paymentsEnabled),...list(workspace,'account').filter(a=>a.platform==='youtube'&&!a.isDemo)];
  const result=[];
  for(const account of providers){
   if(account.status!=='connected')continue;
@@ -10,7 +10,7 @@ export async function syncWorkspace(workspace:string){
   try{
    const response=account.platform==='livepix'?await pollLivePix(workspace,account):await pollYouTube(workspace,account);
    extendLease(key,lease,Date.now()+Math.max(10000,response.next));
-   if(account.platform==='youtube')put(workspace,'account',{lastSyncAt:Date.now(),lastError:null},account.id);
+   if(account.platform==='youtube')put(workspace,'account',{lastSyncAt:Date.now(),lastError:('warning' in response&&response.warning)||null},account.id);
    result.push({platform:account.platform,ok:true});
   }catch(error:any){
    const kind=account.platform==='livepix'?'integration':'account';
