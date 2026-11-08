@@ -1,167 +1,50 @@
-# Publicação: Vercel e servidor persistente
+# Publicação gratuita: Vercel + Supabase
 
-O projeto usa uma interface estática na Vercel e uma API Node 24 com SQLite,
-arquivos enviados e fila contínua. A API precisa de **uma instância sempre ativa
-com volume persistente**. Functions da Vercel com SQLite temporário não atendem
-esses requisitos. Nenhum serviço pago foi contratado automaticamente.
+O projeto usa a Vercel Hobby para a interface e API Node 24. O banco PostgreSQL e o bucket privado de mídia ficam no projeto Supabase existente **00 do dark**, na região us-east-1. Nenhum servidor Render ou recurso pago é contratado pelos scripts.
 
-## Estado desta entrega
+A aplicação fica em https://00-do-dark.vercel.app. O script de publicação só libera a interface com gravação depois de verificar a API, o agendador e o armazenamento.
 
-- Projeto Vercel `00-do-dark` criado na conta conectada; domínio previsto
-  `https://00-do-dark.vercel.app`. **Prévia visual publicada e sinalizada.**
-- A prévia permite navegar com dados simulados; alterações, login, pagamentos
-  e publicações ficam bloqueados. A aplicação com backend ainda não foi publicada.
-- Build e contêiner de produção testados localmente.
-- Cadastro, sessão, regra e vídeo preservados depois de reiniciar o contêiner.
-- Falta uma hospedagem da API com disco persistente e URL HTTPS pública.
-- Credenciais e aprovações das plataformas também são necessárias para as
-  integrações reais; veja [integrations.md](integrations.md).
+## Conectar e publicar
 
-## 1. Hospedar a API
+Nos segredos do ambiente de desenvolvimento, configure `VERCEL_TOKEN` para `api.vercel.com` e `SUPABASE_ACCESS_TOKEN` para `api.supabase.com`. Nunca coloque valores no chat, no Git ou em variáveis `VITE_*`.
 
-### Render preparado
-
-O arquivo [`render.yaml`](../render.yaml) define a proposta: Docker, região Ohio,
-plano **Starter**, uma instância e disco de **1 GB** em `/data`. O Starter e o
-disco são pagos. O preço vigente deve ser conferido no
-[Render](https://render.com/pricing) antes da criação; não há contratação apenas
-por salvar o arquivo ou conectar a conta.
-
-Para permitir a implantação pelo agente, crie uma chave na sua conta Render e
-adicione **RENDER_API_KEY** aos segredos das configurações deste ambiente,
-com destino **api.render.com**. Nunca envie a chave pelo chat. O rascunho já
-inclui esse requisito e os domínios do Render. Revise, salve e publique a
-configuração do ambiente para ativar a conexão; salvar o rascunho sozinho não
-aplica as credenciais.
-
-```bash
-# Consulta a conta e salva .render/proposal.json, sem contratar recursos.
-npm run render:prepare
-# Após revisar plano e custo: cria o serviço, aguarda a API e publica a interface.
-npm run deploy:render
-```
-
-Se houver vários workspaces Render, defina `RENDER_OWNER_ID` para escolher o
-destino. O script não altera serviços com o mesmo nome que não foram vinculados
-por ele, não recria um serviço salvo e não apaga discos. O identificador é salvo
-em `.render/service.json`, ignorado pelo Git. A conta Render precisa ter acesso
-ao repositório GitHub; para repositório privado, conecte a integração GitHub do
-Render e conceda acesso apenas ao repositório necessário.
-
-Também é possível revisar a configuração no fluxo
-[Deploy to Render](https://render.com/deploy?repo=https%3A%2F%2Fgithub.com%2Fmisake920%2Fambiente),
-depois que o código estiver publicado no GitHub. Esse fluxo exige login no
-Render e confirmação do plano pelo titular.
-
-Os formatos da API foram conferidos no código do
-[cliente oficial Render](https://github.com/render-oss/cli/tree/main/pkg/client).
-O provisionamento remoto ainda depende da conexão da conta e não foi validado.
-
-### Configuração do contêiner
-
-Use o `Dockerfile` em um serviço de contêiner com disco persistente ou em um VPS.
-Não use serviços que suspendam o processo: a fila precisa continuar executando.
-
-| Configuração | Valor |
-| --- | --- |
-| Versão Node | 24 ou superior |
-| Porta interna | `3001` |
-| Volume persistente | Montado em `/data`, gravável pelo usuário `node` (UID 1000) |
-| Réplicas | `1` |
-| Health check | `/api/health` |
-| `APP_ORIGIN` | `https://00-do-dark.vercel.app` |
-| `DATA_DIR` | `/data` |
-| `NODE_ENV` | `production` |
-| `TRUST_PROXY` | `1` somente atrás de um proxy confiável que controla os cabeçalhos |
-
-O volume inclui banco, vídeos, capas e chave de criptografia. Preserve a chave
-nos backups. A chave é gerada na primeira inicialização; não a copie para o Git.
-Configure OAuth e SMTP por variáveis protegidas do provedor, quando disponíveis.
-
-Para VPS, o `compose.yaml` mantém os dados em `dark-data` e expõe o serviço
-somente em `127.0.0.1:3001`. Um proxy reverso com TLS deve publicar essa porta.
-Exemplo de inicialização no servidor escolhido:
-
-```bash
-APP_ORIGIN=https://00-do-dark.vercel.app TRUST_PROXY=1 docker compose up -d --build
-```
-
-Esse comando pressupõe o proxy confiável já configurado. Não remova o volume
-durante atualizações. Não execute `docker compose down --volumes` em produção.
-
-Use HTTPS no endereço público da API. O proxy deve aceitar o tamanho de vídeos
-definido no produto (até 512 MB), permitir respostas SSE e não armazenar respostas
-autenticadas em cache. Os limites de upload e duração do caminho completo,
-incluindo o proxy externo da Vercel, ainda precisam de verificação no host real.
-
-## 2. Publicar a interface
-
-### Prévia visual
-
-Uma prévia estática pode ser publicada enquanto o backend é conectado:
-
-```bash
-npm run build:preview
-npm run test:preview
-npm run deploy:preview
-```
-
-Ela usa `dist-preview/`, exporta somente uma demonstração recém-criada e exibe
-um aviso permanente. Não usa o banco existente, não autentica pessoas, não envia
-requisições à API e bloqueia alterações. Não recebe pagamentos nem publica
-vídeos. O teste inclui navegação pelas cinco telas, mobile e bloqueio de ações.
-Este deploy usa o domínio do projeto e será substituído pela aplicação quando
-o backend estiver disponível. `npm run build` continua gerando a aplicação
-normal em `dist/`, com a API real obrigatória.
-
-### Aplicação com backend
-
-Com o backend hospedado e respondendo, configure `BACKEND_URL` no ambiente de
-execução do deploy. É a origem pública, como `https://api.seu-dominio.com`, sem
-caminho, usuário, senha ou parâmetros. `VERCEL_TOKEN` é uma credencial protegida
-do ambiente conectado; não coloque tokens em arquivos versionados.
+Com o projeto Vercel vinculado em `.vercel/project.json`:
 
 ```bash
 npm ci
-npm run build
-BACKEND_URL=https://api.seu-dominio.com npm run deploy:vercel
+npm test
+npm run deploy:supabase
 ```
 
-O script usa a API REST oficial da Vercel, verifica a saúde da API e seu
-`APP_ORIGIN`, prepara as regras de proxy e envia **apenas `dist/`**. Banco, mídia,
-chaves e `.env` não são enviados. As requisições `/api/*` seguem para o backend e
-têm cache compartilhado desabilitado. O navegador usa o mesmo domínio da
-interface, inclusive para autenticação, OAuth e SSE.
+O script seleciona o projeto Supabase existente pelo nome, verifica o plano Hobby da Vercel e cria a role `dark_app` e o schema privado `dark`. A senha principal do banco não é alterada. As credenciais da aplicação são gravadas como variáveis sensíveis da Vercel, somente no ambiente de produção. O token pessoal de gerenciamento do Supabase permanece no ambiente de desenvolvimento.
 
-A vinculação local está em `.vercel/project.json` (ignorada pelo Git). Em outro
-ambiente, vincule o projeto `00-do-dark` na conta Vercel antes de executar o
-script. O deploy só é confirmado após `READY` e verificação de `/api/health` pelo
-domínio público. Se o host da API mudar, é necessário novo deploy da interface.
+O cache privado de provisionamento fica fora da raiz da aplicação, em `../.cache/00-do-dark-deployment`, com diretório 0700 e arquivos 0600. Preserve esse diretório de forma segura enquanto a configuração for mantida. `ENCRYPTION_KEY` existente não é substituída; perdê-la impede recuperar tokens OAuth e segredos TOTP. Os arquivos `.vercel/` são ignorados pelo Git.
 
-## 3. Verificar no domínio final
+O pacote publicado contém JavaScript compilado, dependências e a interface. Não contém banco, arquivos enviados, chaves, cache de provisionamento ou dados de um workspace real.
 
-Verifique cadastro/login/logout, upload e reprodução, atualização de regra,
-calendário com o fuso escolhido, eventos SSE e fonte OBS. Reinicie o backend e
-confirme a persistência. Configure o callback OAuth como
-`https://00-do-dark.vercel.app/api/connect/youtube/callback` e teste com uma conta
-real aprovada antes de depender de publicações automáticas.
+## Persistência e agendamento
 
-LivePix real e conectores automáticos TikTok/Kwai ainda não estão implementados.
-Os dados do modo demonstração são identificados como simulados. Os testes locais
-não comprovam uma integração com as plataformas nem o funcionamento de um deploy
-que ainda não existe.
+- PostgreSQL via pooler de transações com TLS verificado. Transações serializáveis e leases coordenam consumidores e envios entre instâncias da API.
+- Mídia no bucket privado `00-do-dark-media`. O navegador envia diretamente por URL assinada; o servidor confere tamanho, formato, duração e dimensões antes de aceitar o arquivo.
+- Limite de 50 MiB por vídeo e 10 MiB por imagem. O orçamento interno de armazenamento é 900 MiB; reservas pendentes também contam.
+- `pg_cron` + `pg_net` chamam `/api/internal/tick` a cada minuto, usando um segredo do schema privado. O navegador não precisa permanecer aberto para processar publicações. A chamada só é aceita com `CRON_SECRET` e há um lease para impedir execuções concorrentes.
+- A interface consulta atualizações a cada 3 segundos; o overlay, a cada 2,5 segundos. O chat do YouTube é consultado pelo agendador, respeitando o intervalo remoto.
+- Limpeza periódica de sessões, links expirados, reservas de upload, demonstrações antigas e histórico além da retenção configurada.
 
-## Comparação visual
+A precisão do agendamento é de aproximadamente um minuto e depende da disponibilidade dos serviços. O plano gratuito do Supabase pode pausar projetos por inatividade e tem cotas de banco, armazenamento e tráfego. O script não muda planos, não fornece garantia de disponibilidade contínua e não implementa transmissão RTMP.
 
-Com `npm run dev` aberto e Chromium instalado:
+## Variáveis da API
 
-```bash
-npm run visual:capture -- final
-node scripts/visual-report.mjs
-```
+`POSTGRES_URL`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_PUBLISHABLE_KEY`, `ENCRYPTION_KEY`, `CRON_SECRET`, `APP_ORIGIN`, `DATA_DIR=/tmp/00-do-dark` e `DARK_SERVERLESS=1`.
 
-Com o servidor de desenvolvimento aberto, acesse
-`http://localhost:5173/artifacts/visual/comparison.html`. O relatório permite comparar referência,
-primeiro print e versão atual nas cinco telas, com sobreposição e controle de
-opacidade. Prints feitos a 1586 × 992. Não atribuímos porcentagem de identidade:
-ilustrações refeitas, fonte aproximada e dados dinâmicos ainda produzem diferenças.
+O disco `/tmp` serve apenas a processamento temporário. Se a configuração persistente estiver incompleta, a API responde 503; não utiliza SQLite temporário como fallback de produção.
+
+A conexão usa o certificado raiz vinculado pelo painel oficial do Supabase em `https://supabase-downloads.s3-ap-southeast-1.amazonaws.com/prod/ssl/prod-ca-2021.crt`, com validação TLS e de hostname. `POSTGRES_CA` permite fornecer o certificado explicitamente.
+
+O endpoint `/api/health` confirma `databaseDriver=postgresql` e `cloudSetup=true`. `/api/internal/setup` e `/api/internal/tick` exigem autenticação interna; não retornam segredos.
+
+Credenciais OAuth de YouTube, TikTok e LivePix e SMTP são configurações independentes. Vincular o Supabase não autoriza contas sociais, pagamentos ou transmissão. Confira [integrations.md](integrations.md).
+
+## Alternativa local
+
+O Dockerfile e o Compose continuam disponíveis para uma única instância com SQLite e disco persistente. `npm run backup` é exclusivo dessa modalidade. Para PostgreSQL use `pg_dump` ou as ferramentas do provedor, preservando a chave de criptografia e os objetos do bucket. A restauração completa deve ser validada antes de uso comercial.

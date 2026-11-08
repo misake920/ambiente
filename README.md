@@ -21,7 +21,7 @@ A demonstração começa com a fila pausada. Em **Interações**, selecione uma 
 
 - Sete telas responsivas: visão geral, lives, editor de interações, publicações, contas, relatórios e configurações.
 - Cadastro/login, senha derivada por scrypt, sessões HttpOnly, 2FA TOTP e convites com funções de proprietário/operador/moderador. Recuperação de senha depende do SMTP.
-- SQLite em WAL, migrações idempotentes, isolamento de dados por workspace e auditoria.
+- PostgreSQL no Supabase em produção; SQLite WAL no desenvolvimento local. Migrações, isolamento por workspace, auditoria e leases distribuídos.
 - Editor de regras por evento, valor, comando, prioridade, cooldown, duração e acumulação. Duplicar, editar, salvar, desfazer e excluir regras.
 - Fila persistente, aprovação, pausa, cancelamento e confirmação por consumidor. Apenas um consumidor assume uma ação. Ações sem confirmação expiram; não são repetidas automaticamente.
 - Moderação antes de qualquer ação, inclusive para doações: palavras, links, caracteres e intervalo de mensagens. Uma mensagem bloqueada não é lida. A receita confirmada continua contabilizada independentemente da moderação.
@@ -38,8 +38,8 @@ A demonstração começa com a fila pausada. Em **Interações**, selecione uma 
 | Plataforma | Implementado | Dependência / limite |
 | --- | --- | --- |
 | YouTube | OAuth com PKCE/state, identificação de canais, renovação/revogação, upload resumível, envio de capa e leitura do chat de uma live ativa | Código implementado, mas **sem validação ponta a ponta com conta real**: faltam Client ID/Secret, consentimento e aprovação Google. Uploads seguem cotas e regras da conta/aplicativo. |
-| LivePix | Simulador de eventos, regras, deduplicação e transição de pendente para confirmado no motor interno | **Recebimento real não implementado.** Acesso à documentação foi negado pela rede. Contrato oficial, autorização, verificação de eventos e estornos precisam ser confirmados antes de implementar o adaptador. Não há webhook fictício que aceite valores como pagamento. |
-| TikTok | Contas assistidas, calendário e confirmação manual | Publicação direta e chat não implementados. Exigem avaliação da API oficial e aprovação aplicável. |
+| LivePix | Autorização oficial da identidade por link; simulador separado de eventos e regras | Recebimento real de pagamentos, reconciliação e estornos ainda não implementados. Autorizar identidade não comprova recebimento de doações. |
+| TikTok | Login Kit por link/QR quando configurado, contas assistidas e calendário | Login Kit vincula identidade. Não concede acesso ao TikTok LIVE, chat ou transmissão. Publicação e LIVE exigem produtos e aprovações específicos. |
 | Kwai | Contas assistidas, calendário e confirmação manual | Publicação automática e chat não implementados. Acesso e documentação de parceiro precisam ser confirmados. |
 | OBS | Fonte de navegador para overlay | Não há transporte RTMP, controle remoto de cenas do OBS nem transmissão simultânea. A transmissão é iniciada no OBS/plataforma. |
 
@@ -56,10 +56,7 @@ O SMTP usa `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM` e, quando necessário, `SMTP_US
 ## Produção e dados
 
 Para Vercel com API persistente, consulte [docs/deployment.md](docs/deployment.md).
-O Dockerfile, o Compose e a configuração Render estão prontos. A
-[prévia visual está publicada na Vercel](https://00-do-dark.vercel.app), com dados
-simulados e alterações bloqueadas. A aplicação completa ainda depende da API
-com volume persistente e da conexão segura da conta de hospedagem.
+A publicação usa Vercel Hobby e o projeto Supabase existente, com PostgreSQL, bucket privado e agendamento por `pg_cron`. Nenhum recurso pago é criado. O domínio é [00-do-dark.vercel.app](https://00-do-dark.vercel.app).
 
 O comparador visual fica em `artifacts/visual/comparison.html`; os prints finais
 das cinco telas ficam em `artifacts/visual/final/`.
@@ -72,13 +69,11 @@ npm start
 
 O Express serve `dist` e `/api` na porta 3001. Use proxy reverso TLS. Ative `TRUST_PROXY=1` somente com um proxy confiável e porta do Node não exposta diretamente. Configure também os cabeçalhos e limites de upload do proxy (até 512 MB). Mantenha o processo com systemd/serviço equivalente.
 
-Esta versão é para **uma instância de aplicação com disco persistente**. A fila roda no mesmo processo e permite até dois envios concorrentes, um por conta. Um upload lento não bloqueia a fila de interações. Não execute múltiplas réplicas sobre o mesmo arquivo SQLite. Para escala horizontal, será necessário migrar banco/fila/armazenamento para serviços compartilhados, separar workers e acrescentar coordenação distribuída.
+Na Vercel, os dados ficam no PostgreSQL e Supabase Storage; `/tmp` é usado apenas durante a validação e o envio de arquivos. Vídeos têm limite de 50 MiB e imagens de 10 MiB, com orçamento de armazenamento de 900 MiB. O agendador executa aproximadamente a cada minuto; painel e overlay usam consultas periódicas. Veja os limites e a configuração em [docs/deployment.md](docs/deployment.md).
 
-Banco, mídia e chave ficam em `var/` (ou `DATA_DIR`). A chave AES-256-GCM é gerada com permissão 0600 se `ENCRYPTION_KEY` não for fornecida. Preserve a chave: sem ela, tokens e segredos TOTP não podem ser recuperados. Não registre nem exponha os arquivos de dados.
+A alternativa local usa uma única instância com SQLite e disco persistente. `npm run backup` faz backup consistente do SQLite. No PostgreSQL, use as ferramentas do provedor ou `pg_dump` e inclua a mídia privada no plano de recuperação. Preserve `ENCRYPTION_KEY` de forma segura: sem ela, tokens OAuth e segredos TOTP não podem ser recuperados. A restauração completa em outro host ainda não foi validada.
 
-`npm run backup` cria um backup consistente do banco usando a API de backup SQLite. Faça backup adicional de `var/media` e da chave por um processo seguro, com acesso restrito e criptografia. Para restauração, pare o serviço, restaure o banco e a mídia com a mesma chave e reinicie. A restauração completa em outro host ainda não foi validada.
-
-A limpeza periódica remove demos após 24 horas (incluindo seus vídeos), sessões/links expirados e eventos/auditoria além da retenção configurada. Vídeos reais são removidos pela biblioteca. Migração, exportação e uma política de exclusão integral de conta para operação comercial devem ser ampliadas antes de disponibilizar o serviço publicamente.
+A limpeza periódica remove demonstrações após 24 horas, sessões/links expirados, uploads pendentes e histórico além da retenção. A exclusão integral de conta e o monitoramento operacional devem ser ampliados antes de operação comercial.
 
 ## Validação
 

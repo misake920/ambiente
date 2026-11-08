@@ -33,7 +33,11 @@ INSERT OR IGNORE INTO migrations(version) VALUES(1);
 `;
 if(postgres){
  const ddl=schema.replace(/PRAGMA[^;]*;/g,'').replace(/\bINTEGER\b/g,'BIGINT').replace('INSERT OR IGNORE INTO migrations(version) VALUES(1);','INSERT INTO migrations(version) VALUES(1) ON CONFLICT DO NOTHING;');
- db.exec('BEGIN;SELECT pg_advisory_xact_lock(82370411);CREATE SCHEMA IF NOT EXISTS "'+postgresSchema+'";REVOKE ALL ON SCHEMA "'+postgresSchema+'" FROM PUBLIC;'+ddl+'COMMIT;');
+ db.exec('BEGIN;SELECT pg_advisory_xact_lock(82370411);');
+ try{
+  if(!db.prepare('SELECT 1 FROM pg_namespace WHERE nspname=?').get(postgresSchema))db.exec('CREATE SCHEMA "'+postgresSchema+'";');
+  db.exec('REVOKE ALL ON SCHEMA "'+postgresSchema+'" FROM PUBLIC;'+ddl+'COMMIT;');
+ }catch(error){db.exec('ROLLBACK;');throw error;}
 }else{
  db.exec(schema);
  if (!(db.prepare('PRAGMA table_info(jobs)').all() as any[]).some(c=>c.name==='claimed_by')) db.exec('ALTER TABLE jobs ADD COLUMN claimed_by TEXT');

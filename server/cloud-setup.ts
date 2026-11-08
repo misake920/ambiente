@@ -2,7 +2,7 @@ import type {Express,Request,Response,NextFunction} from 'express';
 import {timingSafeEqual} from 'node:crypto';
 import {db,postgres,postgresSchema,acquireLease,releaseLease} from './db.ts';
 import {origin} from './config.ts';
-import {prepareStorage} from './cloud-storage.ts';
+import {prepareStorage,verifyStorage} from './cloud-storage.ts';
 
 function internal(req:Request,res:Response,next:NextFunction){
  const expected=process.env.CRON_SECRET,provided=req.get('authorization')||'';
@@ -11,7 +11,9 @@ function internal(req:Request,res:Response,next:NextFunction){
 export function registerCloudSetup(app:Express){
  app.post('/api/internal/setup',internal,async(_req,res)=>{
   if(!postgres||!process.env.ENCRYPTION_KEY||!origin.startsWith('https://'))throw Object.assign(new Error('Configure PostgreSQL, chave permanente e domínio HTTPS antes de ativar o backend.'),{status:503});
-  await prepareStorage();
+  await prepareStorage();await verifyStorage();
+  const managed=db.prepare("SELECT value FROM runtime_secrets WHERE key='scheduler-job'").get();
+  if(managed){db.prepare('INSERT INTO runtime_secrets(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('setup-complete','1');return res.json({ok:true,schedulerJob:Number(managed.value),storage:'private',paidResources:false});}
   db.exec('CREATE EXTENSION IF NOT EXISTS pg_cron;CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;');
   const save=db.prepare('INSERT INTO runtime_secrets(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
   save.run('cron-secret',process.env.CRON_SECRET!);save.run('app-origin',origin);
@@ -22,6 +24,6 @@ export function registerCloudSetup(app:Express){
  });
  app.post('/api/internal/tick',internal,async(_req,res)=>{
   const lease=acquireLease('worker:cron',285000);if(!lease)return res.json({ok:true,busy:true});
-  try{const {tick}=await import('./worker.ts');await tick(Date.now(),true);res.json({ok:true});}finally{releaseLease('worker:cron',lease);}
+  try{const {tick}=await import('./worker.ts');await tick(Date.now(),true);const {maintenance}=await import('./maintenance.ts');await maintenance();res.json({ok:true});}finally{releaseLease('worker:cron',lease);}
  });
 }

@@ -29,7 +29,8 @@ export function registerCloudUploads(app:Express,requireAuth:RequestHandler,muta
    const details=pending.kind==='media'?await probeVideo(file.filename):await probeImage(file.filename);
    const result=transaction(()=>{
     if(!get(w,'upload',id))throw Object.assign(new Error('Este envio já foi finalizado.'),{status:409});
-    const value=put(w,pending.kind,{name:pending.name,filename:id,storage:'supabase',objectKey:pending.objectKey,size:pending.size,...details,created:Date.now()},id);remove(w,'upload',id);return value;
+    remove(w,'upload',id);
+    const value=put(w,pending.kind,{name:pending.name,filename:id,storage:'supabase',objectKey:pending.objectKey,size:pending.size,...details,created:Date.now()},id);return value;
    });
    log(w,'Arquivo validado e salvo no armazenamento privado.');res.status(201).json(result);
   }catch(error:any){

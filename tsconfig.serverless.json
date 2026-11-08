@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": false,
+    "rewriteRelativeImportExtensions": true,
+    "rootDir": ".",
+    "outDir": ".vercel/cloud-bundle",
+    "sourceMap": false,
+    "declaration": false
+  },
+  "include": ["api/**/*.ts", "server/**/*.ts"],
+  "exclude": ["node_modules", "dist", "tests"]
+}

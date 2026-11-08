@@ -19,7 +19,7 @@ function base(){
 async function storage(route:string,init:RequestInit={}){
  if(!cloudStorageConfigured())throw Object.assign(new Error('O armazenamento persistente ainda não está configurado.'),{status:503});
  const key=serviceKey();const headers={'Content-Type':'application/json',apikey:key,...(key.startsWith('eyJ')?{Authorization:'Bearer '+key}:{}),...init.headers};
- const r=await fetch(base()+route,{...init,headers,signal:AbortSignal.timeout(20000)});
+ const r=await fetch(base()+route,{...init,headers,redirect:'error',signal:AbortSignal.timeout(20000)});
  if(!r.ok)throw Object.assign(new Error('O armazenamento não confirmou a operação (HTTP '+r.status+').'),{status:502,storageStatus:r.status});
  return r;
 }
@@ -48,11 +48,25 @@ export async function materialize(file:any){
  if(file.storage!=='supabase')return {filename:path.join(dataDir,'media',file.filename),cleanup:async()=>{}};
  const filename=path.join(dataDir,'media',randomUUID()),url=await signedDownload(file.objectKey,300);
  try{
-  const r=await fetch(url,{signal:AbortSignal.timeout(30000)});if(!r.ok||!r.body)throw new Error('Não foi possível ler o arquivo privado.');
+  const r=await fetch(url,{redirect:'error',signal:AbortSignal.timeout(30000)});if(!r.ok||!r.body)throw new Error('Não foi possível ler o arquivo privado.');
   let size=0;const limit=new Transform({transform(chunk,_encoding,callback){size+=chunk.length;if(size>cloudMediaLimit)callback(new Error('Arquivo acima do limite do plano gratuito.'));else callback(null,chunk);}});
   await pipeline(Readable.fromWeb(r.body as any),limit,createWriteStream(filename,{flags:'wx',mode:0o600}));
   if(file.size!==undefined&&size!==file.size)throw new Error('O tamanho do arquivo não corresponde ao envio autorizado.');
   await stat(filename);
   return {filename,cleanup:async()=>{await unlink(filename).catch(()=>{});}};
  }catch(error){await unlink(filename).catch(()=>{});throw error;}
+}
+
+/** Verify this application's private storage using a fixed, disposable PNG. */
+export async function verifyStorage(){
+ const key='_setup-check/'+randomUUID();
+ const bytes=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a8z8AAAAASUVORK5CYII=','base64');
+ let file;
+ try{
+  await storage('/object'+objectPath(key),{method:'POST',headers:{'Content-Type':'image/png','x-upsert':'false'},body:bytes});
+  file=await materialize({storage:'supabase',objectKey:key,size:bytes.length});
+  const {probeImage}=await import('./media-validation.ts');
+  const info=await probeImage(file.filename);
+  if(info.width!==1||info.height!==1)throw new Error('A verificação do arquivo privado falhou.');
+ }finally{await file?.cleanup();await deleteCloudFile(key);}
 }

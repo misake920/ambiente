@@ -2,7 +2,7 @@ import {existsSync,writeFileSync} from 'node:fs';
 import {isIP} from 'node:net';
 import {pathToFileURL} from 'node:url';
 export function validateBackendURL(value:string|undefined):URL {
- if(!value)throw new Error('BACKEND_URL não configurado. A API/worker precisa de hospedagem com disco persistente; SQLite em /tmp da Vercel perderia os dados. Consulte docs/deployment.md.');
+ if(!value)throw new Error('BACKEND_URL não configurado para o modo de API externa. Para Vercel + Supabase, use npm run deploy:supabase. Consulte docs/deployment.md.');
  const url=new URL(value);
  if(url.protocol!=='https:'||url.username||url.password||url.search||url.hash||!['','/'].includes(url.pathname))throw new Error('BACKEND_URL deve ser uma origem HTTPS pública, sem senha, caminho ou parâmetros.');
  const host=url.hostname.toLowerCase();

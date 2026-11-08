@@ -1,5 +1,5 @@
 import type {Request,Response} from 'express';
-process.env.DARK_SERVERLESS='1';process.env.NODE_ENV??='production';process.env.DATA_DIR??='/tmp/00-do-dark';
+process.env.DARK_SERVERLESS='1';process.env.NODE_ENV??='production';process.env.DATA_DIR??='/tmp/00-do-dark';process.env.TRUST_PROXY??='1';
 export default async function handler(req:Request,res:Response){
  const storage=process.env.SUPABASE_URL||process.env.NEXT_PUBLIC_SUPABASE_URL||process.env.VITE_PUBLIC_SUPABASE_URL;
  const secret=process.env.SUPABASE_SERVICE_ROLE_KEY||process.env.SUPABASE_SECRET_KEY;

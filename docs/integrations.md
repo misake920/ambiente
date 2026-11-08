@@ -19,7 +19,9 @@ O chat só é lido de transmissões ativas acessíveis pela conta autorizada. O 
 
 ## LivePix
 
-A tentativa de acessar `https://docs.livepix.gg` recebeu HTTP 403 da política de saída do ambiente. Não foram presumidos formato de assinatura, nomes de escopos, payloads ou URLs de pagamento.
+A documentação oficial foi acessada após a atualização da política de rede. O fluxo de autorização de identidade por link foi implementado, com state de uso único, retorno vinculado ao usuário e armazenamento cifrado dos tokens. É necessário configurar `LIVEPIX_CLIENT_ID` e `LIVEPIX_CLIENT_SECRET` e registrar a URL de retorno.
+
+A autorização identifica a conta; o adaptador de pagamentos ainda não foi implementado nem validado com uma conta real.
 
 O motor interno aceita eventos somente por código de integração confiável; a rota pública de teste sempre força `isTest=true`. Não existe rota externa de pagamento que aceite um valor arbitrário e o trate como doação real.
 
@@ -27,10 +29,14 @@ Pendências para implementar o conector: conferir documentação oficial vigente
 
 ## TikTok e Kwai
 
-A versão atual usa planejamento assistido e não pede senhas ou cookies. A autorização/publicação automática deve ser implementada somente após conferir os produtos oficiais aprovados para o aplicativo e para a conta. A existência de uma API de publicação não comprova acesso a chat, transmissão ou contas sem elegibilidade.
+O TikTok Login Kit pode gerar um link oficial de autorização (e QR para abrir esse link), quando `TIKTOK_CLIENT_KEY` e `TIKTOK_CLIENT_SECRET` estiverem configurados. A conta deve aprovar o acesso. Esse fluxo vincula a identidade; não autoriza transmissão, chat ou interações do TikTok LIVE. Um link público de perfil/live também pode ser salvo para o fluxo assistido, sem ser apresentado como autorização.
+
+Para Kwai, o portal público inspecionado correspondeu a Marketing API. Não foi verificado um fluxo genérico que autorize LIVE/chat/transmissão. As contas continuam assistidas. Nenhuma senha ou cookie da plataforma é solicitado.
+
+O sistema não transmite vídeo por RTMP nem substitui o OBS. Integrações de LIVE exigem produtos oficiais ou acesso de parceiro e elegibilidade da conta. A existência de um link de login não demonstra essas permissões.
 
 ## Rede
 
 Foram salvos no rascunho do ambiente os domínios: `docs.livepix.gg`, `developers.google.com`, `developers.tiktok.com`, `developers.kwai.com`, `api.livepix.gg`, `oauth.livepix.gg`, `accounts.google.com`, `oauth2.googleapis.com`, `www.googleapis.com`. Os destinos LivePix de operação são requisitos a confirmar no contrato oficial; nenhuma chamada de produção foi feita.
 
-O salvamento do rascunho não aplicou a política nem publicou o ambiente. Após revisão/salvamento pelo usuário, o acesso precisa ser novamente validado. Os scripts usam `NODE_USE_ENV_PROXY=1` para herdar o proxy e preservar verificação TLS. Nenhuma credencial externa foi configurada ou solicitada em texto.
+Os acessos de gerenciamento do Supabase e Vercel foram validados por HTTPS, com credenciais protegidas do ambiente. Nenhuma credencial OAuth das plataformas foi configurada. Os scripts usam `NODE_USE_ENV_PROXY=1` para herdar o proxy e preservar a verificação TLS.
