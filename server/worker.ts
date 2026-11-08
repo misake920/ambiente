@@ -3,6 +3,7 @@ import { claimInteraction, recoverJobs } from './engine.ts';
 import { broadcast, hasConsumer } from './app.ts';
 import { publishYouTube, pollYouTube } from './connectors.ts';
 import {serverless} from './runtime.ts';
+import {syncWorkspace} from './integration-sync.ts';
 let working=false;
 const nextPoll=new Map<string,number>(),inFlight=new Set<string>();
 async function sendPublication(job:any,data:any,p:any,a:any,lease:string) {
@@ -27,11 +28,7 @@ export async function tick(now=Date.now(),drain=false) {
   const workspaces=db.prepare('SELECT id FROM workspaces').all() as {id:string}[];
   for(const {id} of workspaces) {
    if(hasConsumer(id)){const job=claimInteraction(id);if(job)broadcast(id,'interaction',job);}
-   for(const a of list(id,'account'))if(a.platform==='youtube'&&a.chatEnabled&&!a.isDemo&&a.status==='connected'&&(nextPoll.get(a.id)||0)<=now) {
-    const lease=acquireLease('youtube-chat:'+a.id,60000);if(!lease)continue;
-    nextPoll.set(a.id,now+60000);
-    const operation=pollYouTube(id,a).then(r=>{const next=Date.now()+r.next;nextPoll.set(a.id,next);extendLease('youtube-chat:'+a.id,lease,next);broadcast(id);}).catch(()=>{log(id,'Leitura do chat indisponível. Verifique a conexão da conta.');});pending.push(operation);
-   }
+   pending.push(syncWorkspace(id));
   }
   const due=db.prepare("SELECT * FROM jobs WHERE type='publication' AND state='queued' AND due<=? ORDER BY due LIMIT 20").all(now) as any[];
   for(const job of due) {

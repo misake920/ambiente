@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { db, list, put, settings, transaction, log } from './db.ts';
-export type IncomingEvent = { externalId: string; provider: string; kind: 'donation' | 'chat' | 'follow'; user: string; message: string; amount: number; confirmed: boolean; isTest: boolean; ruleId?: string };
+export type IncomingEvent = { externalId: string; provider: string; kind: 'donation' | 'chat' | 'follow'; user: string; message: string; amount: number; confirmed: boolean; isTest: boolean; ruleId?: string; blockedReason?:string; receivedAt?:number };
 const normalize = (text: string) => text.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 export function moderate(message: string, config: any): string | null {
   if (message.length > config.maxLength) return 'Mensagem excede o limite de caracteres.';
@@ -18,7 +18,7 @@ export function ingest(workspace: string, input: IncomingEvent) {
     const found = db.prepare('SELECT id,data FROM events WHERE workspace=? AND provider=? AND external_id=?').get(workspace, input.provider, input.externalId) as any;
     if (found && (JSON.parse(found.data).confirmed || !input.confirmed)) return { duplicate: true, actions: [] as string[] };
     const eventId = found?.id || randomUUID(), now = Date.now(), config = settings(workspace);
-    let reason = moderate(input.message, config) || moderate(input.user, { ...config, maxLength: 60 });
+    let reason = input.blockedReason || moderate(input.message, config) || moderate(input.user, { ...config, maxLength: 60 });
     if (input.kind === 'chat') {
       const last=db.prepare("SELECT data FROM events WHERE workspace=? AND provider=? AND kind='chat' AND created>? ORDER BY created DESC LIMIT 30").all(workspace,input.provider,now-1500) as any[];
       if(last.some(e=>normalize(JSON.parse(e.data).user)===normalize(input.user))) reason='Aguarde antes de enviar outra mensagem.';
@@ -66,16 +66,16 @@ export function recoverJobs(now = Date.now()) {
     db.prepare("UPDATE jobs SET state=?, error=?, updated=? WHERE id=? AND state='running' AND lease<?").run(state, job.type === 'publication' ? 'Resultado remoto incerto. Verifique na plataforma antes de tentar novamente.' : 'Overlay não confirmou a execução. A ação não será repetida automaticamente.', now, job.id, now);
   }
 }
-export function claimInteraction(workspace: string) {
+export function claimInteraction(workspace: string,testsOnly=false) {
   return transaction(() => {
     const config = settings(workspace);
     if (config.paused || config.emergency) return null;
     if (db.prepare("SELECT id FROM jobs WHERE workspace=? AND type='interaction' AND state='running'").get(workspace)) return null;
     // Aging guarantees that chat actions eventually outrank recent high-priority donations.
-    const row = db.prepare("SELECT * FROM jobs WHERE workspace=? AND type='interaction' AND state='queued' AND due<=? ORDER BY (json_extract(data,'$.priority') + (? - created)/1000.0) DESC, created LIMIT 1").get(workspace, Date.now(), Date.now()) as any;
+    const row = db.prepare("SELECT * FROM jobs WHERE workspace=? AND type='interaction' AND state='queued' AND due<=? "+(testsOnly?" AND CAST(json_extract(data,'$.isTest') AS TEXT) IN ('true','1')":"")+" ORDER BY (json_extract(data,'$.priority') + (? - created)/1000.0) DESC, created LIMIT 1").get(workspace, Date.now(), Date.now()) as any;
     if (!row) return null;
     const data = JSON.parse(row.data), now = Date.now();
-    db.prepare("UPDATE jobs SET state='running', attempts=attempts+1, lease=?, claimed_by=NULL, updated=? WHERE id=? AND state='queued'").run(now + (data.duration+15)*1000, now, row.id);
+    db.prepare("UPDATE jobs SET state='running', attempts=attempts+1, lease=?, claimed_by=NULL, updated=? WHERE id=? AND state='queued'").run(now + (data.action==='speak'?105:data.duration+15)*1000, now, row.id);
     if(data.action==='scene') put(workspace,'settings',{scene:data.scene},config.id);
     if(data.action==='quiz') put(workspace,'settings',{scene:'Quiz'},config.id);
     return { ...row, state: 'running', data };

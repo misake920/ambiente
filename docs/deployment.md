@@ -2,7 +2,7 @@
 
 O projeto usa a Vercel Hobby para a interface e API Node 24. O banco PostgreSQL e o bucket privado de mídia ficam no projeto Supabase existente **00 do dark**, na região us-east-1. Nenhum servidor Render ou recurso pago é contratado pelos scripts.
 
-A aplicação fica em https://00-do-dark.vercel.app. O script de publicação só libera a interface com gravação depois de verificar a API, o agendador e o armazenamento.
+A aplicação fica em https://00-do-dark.vercel.app. O script publica o pacote compilado e verifica a API, o agendador e o armazenamento. A versão do rascunho não é publicada automaticamente; execute o deploy somente após autorização.
 
 ## Conectar e publicar
 
@@ -28,7 +28,7 @@ O pacote publicado contém JavaScript compilado, dependências e a interface. N�
 - Mídia no bucket privado `00-do-dark-media`. O navegador envia diretamente por URL assinada; o servidor confere tamanho, formato, duração e dimensões antes de aceitar o arquivo.
 - Limite de 50 MiB por vídeo e 10 MiB por imagem. O orçamento interno de armazenamento é 900 MiB; reservas pendentes também contam.
 - `pg_cron` + `pg_net` chamam `/api/internal/tick` a cada minuto, usando um segredo do schema privado. O navegador não precisa permanecer aberto para processar publicações. A chamada só é aceita com `CRON_SECRET` e há um lease para impedir execuções concorrentes.
-- A interface consulta atualizações a cada 3 segundos; o overlay, a cada 2,5 segundos. O chat do YouTube é consultado pelo agendador, respeitando o intervalo remoto.
+- A interface consulta atualizações a cada 4 segundos; o overlay, a cada 2,5 segundos. Painel, overlay e agendador podem sincronizar eventos LivePix/YouTube. Leases preservam o intervalo remoto, com mínimo de 10 segundos.
 - Limpeza periódica de sessões, links expirados, reservas de upload, demonstrações antigas e histórico além da retenção configurada.
 
 A precisão do agendamento é de aproximadamente um minuto e depende da disponibilidade dos serviços. O plano gratuito do Supabase pode pausar projetos por inatividade e tem cotas de banco, armazenamento e tráfego. O script não muda planos, não fornece garantia de disponibilidade contínua e não implementa transmissão RTMP.
@@ -43,7 +43,7 @@ A conexão usa o certificado raiz vinculado pelo painel oficial do Supabase em `
 
 O endpoint `/api/health` confirma `databaseDriver=postgresql` e `cloudSetup=true`. `/api/internal/setup` e `/api/internal/tick` exigem autenticação interna; não retornam segredos.
 
-Credenciais OAuth de YouTube, TikTok e LivePix e SMTP são configurações independentes. Vincular o Supabase não autoriza contas sociais, pagamentos ou transmissão. Confira [integrations.md](integrations.md).
+As credenciais OAuth de YouTube/TikTok e as credenciais Client Credentials LivePix podem ser configuradas pelo proprietário na interface, isoladas por workspace e cifradas. SMTP permanece uma configuração do servidor. Vincular o Supabase não autoriza contas sociais, pagamentos ou transmissão. Confira [integrations.md](integrations.md).
 
 ## Alternativa local
 

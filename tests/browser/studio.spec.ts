@@ -3,50 +3,37 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {test,expect} from '@playwright/test';
-const fixtureDir=mkdtempSync(join(tmpdir(),'dark-browser-'));
-const fixture=join(fixtureDir,'dark-fixture.mp4');
-test.beforeAll(()=>{execFileSync('ffmpeg',['-hide_banner','-loglevel','error','-f','lavfi','-i','color=c=0x5c19a0:s=320x180:d=1','-c:v','libx264','-pix_fmt','yuv420p','-y',fixture]);});
+const fixtureDir=mkdtempSync(join(tmpdir(),'dark-browser-')),fixture=join(fixtureDir,'dark-fixture.mp4');
+test.beforeAll(()=>execFileSync('ffmpeg',['-hide_banner','-loglevel','error','-f','lavfi','-i','color=c=0x343039:s=320x180:d=1','-c:v','libx264','-pix_fmt','yuv420p','-y',fixture]));
 test.afterAll(()=>rmSync(fixtureDir,{recursive:true,force:true}));
-async function start(page:any){await page.goto('/');await expect(page.locator('.dashboard-page')).toBeVisible();await page.waitForTimeout(450);}
+async function start(page:any){
+ await page.goto('/');await expect(page.getByRole('heading',{name:'Entrar no estúdio',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Criar conta',exact:true}).click();await page.getByLabel('Nome',{exact:true}).fill('Pessoa de teste');await page.getByLabel('E-mail',{exact:true}).fill('browser-'+Date.now()+'-'+Math.random().toString(16).slice(2)+'@example.invalid');await page.getByLabel('Senha',{exact:true}).fill('browser-test-password-2026');await page.getByRole('button',{name:'Criar conta',exact:true}).click();await expect(page.locator('.dashboard-page')).toBeVisible();
+}
 async function nav(page:any,name:RegExp){await page.getByRole('navigation').getByRole('button',{name}).click();}
-
-test('desktop navigation, real state and notification affordances',async({page})=>{
+test('starts at login and an actual new account has no fabricated activity',async({page})=>{
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));await page.setViewportSize({width:1512,height:1024});await start(page);
- await expect(page.getByText('Demonstração',{exact:true})).toBeVisible();await expect(page.getByText('R$ 1.284,00',{exact:true}).first()).toBeVisible();
- await page.waitForTimeout(1000);await page.screenshot({path:'test-results/dashboard-desktop.png',fullPage:true});
- const routes:[RegExp,string][]=[[/Interações/,'.automation-editor'],[/Publicações/,'.week-calendar'],[/Contas$/,'.account-grid'],[/Central de lives/,'.live-stage'],[/Relatórios/,'.data-table'],[/Configurações/,'.settings-layout']];
- for(const [label,selector] of routes){await nav(page,label);await expect(page.locator(selector)).toBeVisible();}
- await page.getByRole('button',{name:'Abrir notificações'}).click();await expect(page.locator('.notification-dropdown')).toBeVisible();
- expect(errors).toEqual([]);
+ await expect(page.getByText('R$ 1.284,00',{exact:true})).toHaveCount(0);await expect(page.getByText('Demonstração',{exact:true})).toHaveCount(0);
+ const state=await (await page.request.get('/api/state')).json();expect(state.accounts).toHaveLength(0);expect(state.events).toHaveLength(0);expect(state.stats.revenue).toBe(0);expect(state.stats.interactions).toBe(0);expect(state.lives).toHaveLength(0);
+ expect(await page.locator('h1').evaluate((h:HTMLElement)=>parseFloat(getComputedStyle(h).fontSize))).toBeLessThanOrEqual(26);
+ await page.screenshot({path:'test-results/dashboard-professional.png',fullPage:true});
+ for(const [label,selector] of [[/Interações/,'.automation-editor'],[/Publicações/,'.week-calendar'],[/Contas e integrações|Contas$/,'.accounts-table-panel'],[/Central de lives/,'.camera-preview'],[/Relatórios/,'.data-table'],[/Configurações/,'.settings-layout']] as [RegExp,string][]){await nav(page,label);await expect(page.locator(selector)).toBeVisible();}
+ await page.getByRole('button',{name:'Abrir notificações'}).click();await expect(page.locator('.notification-dropdown')).toBeVisible();expect(errors).toEqual([]);
 });
-
-test('rule editor saves, persists and executes a test exactly once',async({page})=>{
- await start(page);let s=await (await page.request.get('/api/state')).json();for(const j of s.jobs.filter((j:any)=>j.type==='interaction'))await page.request.post(`/api/jobs/${j.id}/cancel`);
- await nav(page,/Interações/);await page.getByRole('button',{name:'Nova automação',exact:true}).click();
- await page.getByLabel('Nome da automação').fill('Saudação E2E');await page.getByLabel('Valor mínimo').fill('12');await page.getByRole('button',{name:'Salvar fluxo',exact:true}).click();await expect(page.getByText('Automação salva.',{exact:true})).toBeVisible();
- await page.reload();await page.getByLabel('Selecionar automação').selectOption({label:'Automação: Saudação E2E'});await expect(page.getByRole('button',{name:'Testar interação',exact:true})).toBeEnabled();
- await page.getByRole('button',{name:'Testar interação',exact:true}).click();await page.getByLabel('Nome do participante').fill('Pessoa E2E');await page.getByRole('button',{name:'Enviar teste para a fila'}).click();
- await expect(page.locator('.interaction-toast')).toBeVisible({timeout:8000});await expect(page.locator('.interaction-toast')).toContainText('Pessoa E2E');
- await expect.poll(async()=>{const state=await (await page.request.get('/api/state')).json();return state.jobs.find((j:any)=>j.data.user==='Pessoa E2E')?.state;},{timeout:12000}).toBe('completed');
- s=await (await page.request.get('/api/state')).json();expect(s.jobs.filter((j:any)=>j.data.user==='Pessoa E2E')).toHaveLength(1);
- await page.screenshot({path:'test-results/interactions-desktop.png',fullPage:true});
+test('rule changes persist and an explicit test is executed once without inflating revenue',async({page})=>{
+ await start(page);await nav(page,/Interações/);await page.getByRole('button',{name:'Nova automação',exact:true}).click();await page.getByRole('button',{name:'Exibir alerta',exact:true}).click();await page.getByRole('button',{name:'Regra',exact:true}).click();await page.getByLabel('Nome da automação').fill('Saudação E2E');await page.getByLabel(/Valor mínimo/).fill('12');await page.getByRole('button',{name:'Salvar fluxo',exact:true}).click();await expect(page.getByText('Automação salva.',{exact:true})).toBeVisible();await page.reload();await page.getByLabel('Selecionar automação').selectOption({label:'Automação: Saudação E2E'});await page.getByRole('button',{name:'Testar interação',exact:true}).click();await page.getByLabel('Nome do participante').fill('Pessoa E2E');await page.getByRole('button',{name:'Enviar teste para a fila'}).click();await expect(page.locator('.interaction-toast')).toContainText('Pessoa E2E',{timeout:10000});
+ await expect.poll(async()=>{const s=await(await page.request.get('/api/state')).json();return s.jobs.find((j:any)=>j.data.user==='Pessoa E2E')?.state;},{timeout:15000}).toBe('completed');
+ const state=await(await page.request.get('/api/state')).json();expect(state.stats.revenue).toBe(0);expect(state.stats.interactions).toBe(0);expect(state.jobs.filter((j:any)=>j.data.user==='Pessoa E2E')).toHaveLength(1);
 });
-
-test('calendar creates a persistent schedule and keeps demo uploads unposted',async({page})=>{
- await start(page);await nav(page,/Publicações/);await page.getByRole('button',{name:'Agendar publicação',exact:true}).click();
- const drawer=page.getByRole('dialog',{name:'Nova publicação'});await drawer.getByLabel(/Título/).fill('Conteúdo agendado E2E');await drawer.getByLabel('Descrição',{exact:true}).fill('Uma publicação de teste.');await drawer.getByLabel('Adicionar hashtag',{exact:true}).fill('00doDark');await drawer.getByLabel('Adicionar hashtag',{exact:true}).press('Enter');await drawer.getByRole('button',{name:'Selecionar contas do YouTube',exact:true}).click();await drawer.getByRole('button',{name:'Agendar vídeo',exact:true}).click();await expect(drawer).toBeHidden();
- await page.getByRole('button',{name:'Lista',exact:true}).click();await expect(page.getByText('Conteúdo agendado E2E',{exact:true})).toBeVisible();await page.reload();await page.getByRole('button',{name:'Lista',exact:true}).click();await expect(page.getByText('Conteúdo agendado E2E',{exact:true})).toBeVisible();
- const s=await (await page.request.get('/api/state')).json();const p=s.publications.find((p:any)=>p.title==='Conteúdo agendado E2E');expect(p.hashtags).toContain('00doDark');expect(s.jobs.find((j:any)=>j.data.publicationId===p.id).state).toBe('queued');
+test('actual uploaded video can be scheduled to an explicitly manual account',async({page})=>{
+ await start(page);const response=await page.request.post('/api/accounts/assisted',{data:{platform:'tiktok',name:'Canal de teste',handle:'@testecanal'}});expect(response.status()).toBe(201);await page.reload();await nav(page,/Publicações/);await expect(page.getByRole('dialog',{name:'Nova publicação'})).toHaveCount(0);await page.getByRole('button',{name:'Agendar publicação',exact:true}).click();const drawer=page.getByRole('dialog',{name:'Nova publicação'});await drawer.getByLabel('Enviar vídeo',{exact:true}).setInputFiles(fixture);await expect(drawer.locator('.upload-zone').getByText('dark-fixture.mp4',{exact:true})).toBeVisible();await drawer.getByLabel('Título',{exact:true}).fill('Vídeo agendado E2E');await drawer.getByLabel('Descrição',{exact:true}).fill('Publicação manual de teste.');await drawer.getByLabel('Adicionar hashtag',{exact:true}).fill('conteudo');await drawer.getByLabel('Adicionar hashtag',{exact:true}).press('Enter');await drawer.getByRole('button',{name:'Selecionar contas do TikTok',exact:true}).click();await drawer.getByRole('button',{name:'Agendar vídeo',exact:true}).click();await expect(drawer).toBeHidden();await page.getByRole('button',{name:'Lista',exact:true}).click();await expect(page.getByText('Vídeo agendado E2E',{exact:true})).toBeVisible();await page.reload();await page.getByRole('button',{name:'Lista',exact:true}).click();await expect(page.getByText('Vídeo agendado E2E',{exact:true})).toBeVisible();const state=await(await page.request.get('/api/state')).json();const p=state.publications.find((p:any)=>p.title==='Vídeo agendado E2E');expect(p.mediaId).toBeTruthy();expect(state.accounts[0].status).toBe('assisted');const media=state.media.find((m:any)=>m.id===p.mediaId);expect(media.width).toBe(320);expect((await page.request.get('/api/media/'+media.id+'/file')).ok()).toBeTruthy();
 });
-
-test('actual media is probed, stored and playable through authorized endpoint',async({page})=>{
- await start(page);await nav(page,/Publicações/);await page.getByRole('button',{name:/Biblioteca de mídia/}).click();await page.locator('input[type=file]').setInputFiles(fixture);await expect(page.getByText('dark-fixture.mp4',{exact:true})).toBeVisible();
- const s=await (await page.request.get('/api/state')).json();const media=s.media.find((m:any)=>m.name==='dark-fixture.mp4');expect(media.width).toBe(320);expect(media.duration).toBeGreaterThan(0);const r=await page.request.get(`/api/media/${media.id}/file`);expect(r.ok()).toBeTruthy();expect(r.headers()['content-type']).toContain('video/mp4');
+test('OBS overlay executes and acknowledges a test while dashboard does not steal the action',async({page,context})=>{
+ await start(page);const state=await(await page.request.get('/api/state')).json();const overlay=await context.newPage();await overlay.goto('/?overlay='+state.settings.overlayToken+'&audio=0');await expect(overlay.locator('.obs-overlay')).toBeVisible();expect(await overlay.evaluate(()=>getComputedStyle(document.documentElement).backgroundColor)).toBe('rgba(0, 0, 0, 0)');await nav(page,/Central de lives/);await expect(page.getByText('Overlay ativo',{exact:true})).toBeVisible({timeout:8000});const rule=state.rules.find((r:any)=>r.trigger==='donation');await page.request.post('/api/events/test',{data:{ruleId:rule.id,kind:'donation',user:'Pessoa OBS',message:'Teste no overlay',amount:1500,confirmed:true}});await expect(overlay.locator('.obs-alert')).toContainText('Pessoa OBS',{timeout:10000});await expect(page.locator('.interaction-toast')).toHaveCount(0);await expect.poll(async()=>{const s=await(await page.request.get('/api/state')).json();return s.jobs.find((j:any)=>j.data.user==='Pessoa OBS')?.state;},{timeout:15000}).toBe('completed');await overlay.close();
 });
-
-test('mobile navigation, editor controls and calendar do not overflow viewport',async({page})=>{
- await page.setViewportSize({width:390,height:844});await start(page);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
- const box=await page.locator('.sidebar').boundingBox();expect(box!.x+box!.width).toBeLessThanOrEqual(1);
- await page.getByRole('button',{name:'Abrir menu'}).click();await nav(page,/Interações/);await page.waitForTimeout(500);await expect(page.locator('.action-inspector')).toBeVisible();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();await page.screenshot({path:'test-results/interactions-mobile.png',fullPage:true});
- await page.getByRole('button',{name:'Abrir menu'}).click();await nav(page,/Publicações/);await expect(page.locator('.week-calendar')).toBeVisible();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+test('camera permission flow opens a real MediaStream and stops its tracks',async({page})=>{
+ await start(page);await nav(page,/Central de lives/);await page.getByRole('button',{name:'Abrir câmera e microfone',exact:true}).click();await expect(page.getByText('Câmera do navegador',{exact:true})).toBeVisible();expect(await page.locator('video').evaluate((v:HTMLVideoElement)=>(v.srcObject as MediaStream)?.getVideoTracks()[0]?.readyState)).toBe('live');await page.getByRole('button',{name:'Microfone ligado',exact:true}).click();await expect(page.getByRole('button',{name:'Microfone desligado',exact:true})).toBeVisible();await page.getByRole('button',{name:'Desligar câmera',exact:true}).click();await expect(page.getByRole('button',{name:'Abrir câmera e microfone',exact:true})).toBeVisible();expect(await page.locator('video').evaluate((v:HTMLVideoElement)=>v.srcObject)).toBeNull();
+});
+test('mobile navigation, interaction editor and calendar fit the viewport',async({page})=>{
+ await page.setViewportSize({width:390,height:844});await start(page);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();await page.screenshot({path:'test-results/dashboard-mobile.png',fullPage:true});for(const name of [/Interações/,/Publicações/,/Contas$/, /Central de lives/]){await page.getByRole('button',{name:'Abrir menu'}).click();await nav(page,name);await expect(page.locator('.sidebar')).not.toHaveClass(/\bopen\b/);await expect.poll(async()=>{const bounds=await page.locator('.sidebar').boundingBox();return bounds!.x+bounds!.width;}).toBeLessThanOrEqual(1);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();}await page.screenshot({path:'test-results/lives-mobile.png',fullPage:true});
 });

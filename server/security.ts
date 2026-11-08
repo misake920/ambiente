@@ -12,4 +12,4 @@ const key = Buffer.from(process.env.ENCRYPTION_KEY || readFileSync(keyPath, 'utf
 if (key.length !== 32) throw new Error('ENCRYPTION_KEY precisa de 64 caracteres hexadecimais.');
 export function encrypt(value: string) { const iv = randomBytes(12); const cipher = createCipheriv('aes-256-gcm', key, iv); return [iv.toString('hex'), Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]).toString('hex'), cipher.getAuthTag().toString('hex')].join('.'); }
 export function decrypt(value: string) { const [iv, text, tag] = value.split('.'); const cipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'hex')); cipher.setAuthTag(Buffer.from(tag, 'hex')); return Buffer.concat([cipher.update(Buffer.from(text, 'hex')), cipher.final()]).toString('utf8'); }
-export function publicAccount(account: any) { const { tokens, ...safe } = account; return safe; }
+export function publicAccount(account: any) { const { tokens, credentials, clientSecret, webhookHash, ...safe } = account; return safe; }

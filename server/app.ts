@@ -23,6 +23,9 @@ import {cloudStorageConfigured,signedDownload,deleteCloudFile} from './cloud-sto
 import {registerCloudUploads} from './cloud-uploads.ts';
 import {probeVideo,probeImage} from './media-validation.ts';
 import {registerCloudSetup} from './cloud-setup.ts';
+import {connectLivePix,disconnectLivePix} from './livepix.ts';
+import {syncWorkspace} from './integration-sync.ts';
+import {saveOAuth} from './connector-config.ts';
 
 declare global { namespace Express { interface Request { auth: { user: string | null; workspace: string; demo: boolean; role: string; name: string; email: string | null }; } } }
 export const app=express();
@@ -42,7 +45,7 @@ app.use('/api',(req,res,next)=>{
 });
 const authLimiter=rateLimit({windowMs:15*60000,limit:40,standardHeaders:'draft-8',legacyHeaders:false,message:{error:'Muitas tentativas. Aguarde alguns minutos.'}});
 app.use('/api/auth',authLimiter);
-app.get('/api/health',(_req,res)=>res.json({status:'ok',version:'0.1.0',publicOrigin:origin,database:!!db.prepare('SELECT 1').get(),databaseDriver:postgres?'postgresql':'sqlite',cloudSetup:serverless?!!db.prepare("SELECT value FROM runtime_secrets WHERE key='setup-complete'").get():undefined}));
+app.get('/api/health',(_req,res)=>res.json({status:'ok',version:'0.2.0',publicOrigin:origin,database:!!db.prepare('SELECT 1').get(),databaseDriver:postgres?'postgresql':'sqlite',cloudSetup:serverless?!!db.prepare("SELECT value FROM runtime_secrets WHERE key='setup-complete'").get():undefined}));
 function fail(message:string,status=400):never {throw Object.assign(new Error(message),{status});}
 function cookie(req:Request,name:string) { const value=req.headers.cookie?.split(';').find(c=>c.trim().startsWith(name+'='));return value?.trim().slice(name.length+1); }
 function session(res:Response,user:string|null,workspace:string) {
@@ -53,7 +56,7 @@ function session(res:Response,user:string|null,workspace:string) {
 export const requireAuth=(req:Request,res:Response,next:NextFunction)=>{
  const token=cookie(req,'dark_session');
  const row=token ? db.prepare('SELECT s.*,w.demo,w.name as workspaceName,u.name,u.email,m.role FROM sessions s JOIN workspaces w ON w.id=s.workspace LEFT JOIN users u ON u.id=s.user LEFT JOIN members m ON m.workspace=s.workspace AND m.user=s.user WHERE s.token=? AND s.expires>?').get(hash(token),Date.now()) as any : null;
- if(!row || (!row.demo&&!row.role)) return res.status(401).json({error:'Entre na sua conta para continuar.'});
+ if(!row || row.demo&&process.env.DEMO_ENABLED==='false' || (!row.demo&&!row.role)) return res.status(401).json({error:'Entre na sua conta para continuar.'});
  req.auth={user:row.user,workspace:row.workspace,demo:!!row.demo,role:row.demo?'owner':row.role,name:row.name||'Dark Studio',email:row.email||null}; next();
 };
 const role=(...roles:string[])=>(req:Request,res:Response,next:NextFunction)=>roles.includes(req.auth.role)?next():res.status(403).json({error:'Seu perfil não permite esta ação.'});
@@ -109,7 +112,7 @@ app.post('/api/auth/logout',requireAuth,(req,res)=>{db.prepare('DELETE FROM sess
 app.get('/api/me',requireAuth,(req,res)=>{
  const memberships=req.auth.user?db.prepare('SELECT w.id,w.name,m.role FROM members m JOIN workspaces w ON w.id=m.workspace WHERE m.user=?').all(req.auth.user):[{id:req.auth.workspace,name:'Dark Studio',role:'owner'}];
  const user=req.auth.user?db.prepare('SELECT totp FROM users WHERE id=?').get(req.auth.user) as any:null;
- res.json({...req.auth,workspaces:memberships,has2fa:!!user?.totp,capabilities:capabilities(),smtp:!!process.env.SMTP_HOST});
+ res.json({...req.auth,workspaces:memberships,has2fa:!!user?.totp,capabilities:capabilities(req.auth.workspace),smtp:!!process.env.SMTP_HOST});
 });
 app.post('/api/workspace/switch',requireAuth,(req,res)=>{if(!req.auth.user) fail('Crie uma conta para usar equipes.');const id=z.string().uuid().parse(req.body.id);if(!db.prepare('SELECT 1 FROM members WHERE workspace=? AND user=?').get(id,req.auth.user!)) fail('Workspace não encontrado.',404);session(res,req.auth.user,id);res.json({ok:true});});
 app.post('/api/auth/2fa/setup',requireAuth,async(req,res)=>{
@@ -130,14 +133,40 @@ app.post('/api/auth/2fa/disable',requireAuth,(req,res)=>{
  if(!u||!checkPassword(z.string().parse(req.body.password),u.password)||!u.totp||totp(decrypt(u.totp),u.email).validate({token:z.string().parse(req.body.code),window:1})===null) fail('Senha ou código inválidos.');
  db.prepare('UPDATE users SET totp=NULL WHERE id=?').run(u.id);res.json({ok:true});
 });
-app.get('/api/state',requireAuth,(req,res)=>{
- if(serverless){recoverJobs();claimInteraction(req.auth.workspace);}
+app.get('/api/state',requireAuth,async(req,res)=>{
+ await syncWorkspace(req.auth.workspace);
+ recoverJobs();const overlayConnected=!!db.prepare('SELECT 1 FROM leases WHERE key=? AND expires>?').get('overlay-presence:'+req.auth.workspace,Date.now());
  const w=req.auth.workspace,config=settings(w),allEvents=(db.prepare('SELECT * FROM events WHERE workspace=? ORDER BY created DESC LIMIT 500').all(w) as any[]).map(e=>({...e,data:JSON.parse(e.data)}));
- const financialTotals=db.prepare("SELECT COALESCE(SUM(json_extract(data,'$.amount')),0) as revenue,COUNT(*) as donations FROM events WHERE workspace=? AND kind='donation' AND json_extract(data,'$.confirmed')=1 AND (?=1 OR is_test=0)").get(w,+req.auth.demo) as any;
+ const financialTotals=db.prepare("SELECT COALESCE(SUM(json_extract(data,'$.amount')),0) as revenue,COUNT(*) as donations FROM events WHERE workspace=? AND kind='donation' AND json_extract(data,'$.confirmed')=1 AND (?=1 OR is_test=0)").get(w,0) as any;
  const members=db.prepare('SELECT u.id,u.name,u.email,m.role FROM members m JOIN users u ON u.id=m.user WHERE m.workspace=?').all(w);
- res.json({demoMetrics:req.auth.demo?list(w,'demo-metrics')[0]:undefined,runtime:{polling:serverless,uploads:cloudStorageConfigured()?'signed':'local',maxUploadBytes:cloudStorageConfigured()?cloudMediaLimit:512*1024*1024},settings:config,accounts:list(w,'account').map(publicAccount),integrations:list(w,'integration').map(publicAccount),rules:list(w,'rule'),publications:list(w,'publication'),media:list(w,'media'),artworks:list(w,'artwork'),templates:list(w,'template'),lives:list(w,'live'),quiz:list(w,'quiz')[0]||null,scores:list(w,'score'),events:allEvents,jobs:jobs(w),audit:db.prepare('SELECT * FROM audit WHERE workspace=? ORDER BY created DESC LIMIT 50').all(w),members,
-  stats:{revenue:financialTotals.revenue,donations:financialTotals.donations,interactions:jobs(w).filter(j=>j.type==='interaction'&&j.state==='completed').length,blocked:allEvents.filter(e=>e.data.status==='blocked').length},capabilities:capabilities()});
+ res.json({demoMetrics:req.auth.demo?list(w,'demo-metrics')[0]:undefined,runtime:{polling:serverless,uploads:cloudStorageConfigured()?'signed':'local',maxUploadBytes:cloudStorageConfigured()?cloudMediaLimit:512*1024*1024,overlayConnected},settings:config,accounts:list(w,'account').map(publicAccount),integrations:list(w,'integration').map(publicAccount),rules:list(w,'rule'),publications:list(w,'publication'),media:list(w,'media'),artworks:list(w,'artwork'),templates:list(w,'template'),lives:list(w,'live'),quiz:list(w,'quiz')[0]||null,scores:list(w,'score'),events:allEvents,jobs:jobs(w),audit:db.prepare('SELECT * FROM audit WHERE workspace=? ORDER BY created DESC LIMIT 50').all(w),members,
+  stats:{revenue:financialTotals.revenue,donations:financialTotals.donations,todayRevenue:db.prepare("SELECT COALESCE(SUM(json_extract(data,'$.amount')),0) AS total FROM events WHERE workspace=? AND kind='donation' AND is_test=0 AND json_extract(data,'$.confirmed')=1 AND created>=?").get(w,Date.now()-86400000).total,chatMessages:db.prepare("SELECT COUNT(*) AS total FROM events WHERE workspace=? AND kind='chat' AND is_test=0").get(w).total,interactions:db.prepare("SELECT COUNT(*) AS total FROM jobs WHERE workspace=? AND type='interaction' AND state='completed' AND CAST(json_extract(data,'$.isTest') AS TEXT) IN ('false','0')").get(w).total,blocked:allEvents.filter(e=>!e.is_test&&e.data.status==='blocked').length},capabilities:capabilities(req.auth.workspace)});
 });
+
+app.post('/api/connectors/:provider',requireAuth,owner,(req,res)=>{
+ if(req.auth.demo)fail('Entre em uma conta própria.',409);
+ const provider=z.enum(['youtube','tiktok','livepix']).parse(req.params.provider);
+ const data=z.object({clientId:z.string().trim().min(4).max(1024),clientSecret:z.string().min(8).max(2048)}).parse(req.body);
+ saveOAuth(provider,req.auth.workspace,data.clientId,data.clientSecret);log(req.auth.workspace,'Configuração OAuth '+provider+' atualizada.');res.json({ok:true,callback:origin+'/api/connect/'+provider+'/callback'});
+});
+app.post('/api/integrations/livepix',requireAuth,owner,async(req,res)=>{
+ if(req.auth.demo)fail('Entre em uma conta própria.',409);
+ const data=z.object({clientId:z.string().trim().min(4).max(512),clientSecret:z.string().min(8).max(2048)}).parse(req.body);
+ res.status(201).json(publicAccount(await connectLivePix(req.auth.workspace,data.clientId,data.clientSecret)));
+});
+app.delete('/api/integrations/livepix/:id',requireAuth,owner,async(req,res)=>{
+ const value=get(req.auth.workspace,'integration',String(req.params.id));if(!value||value.platform!=='livepix')fail('Integração não encontrada.',404);
+ const remote=await disconnectLivePix(req.auth.workspace,value);res.json({ok:true,...remote});
+});
+app.post('/api/integrations/sync',requireAuth,mutate,async(req,res)=>res.json({results:await syncWorkspace(req.auth.workspace)}));
+app.post('/api/hooks/livepix/:token',rateLimit({windowMs:60000,limit:120}),async(req,res)=>{
+ const token=z.string().regex(/^[a-f0-9]{64}$/).parse(req.params.token);
+ const row=db.prepare("SELECT workspace FROM objects WHERE kind='integration' AND json_extract(data,'$.webhookHash')=?").get(hash(token));
+ if(!row)fail('Endpoint não encontrado.',404);
+ // The webhook body is deliberately ignored. Financial values come from the authenticated API.
+ await syncWorkspace(row.workspace);res.json({ok:true});
+});
+
 const ruleSchema=z.object({name:z.string().trim().min(1).max(80),trigger:z.enum(['donation','chat','follow']),minAmount:z.number().min(0).max(100000),action:z.enum(['speak','sound','alert','animation','scene','quiz']),speech:z.string().max(500),voice:z.string().max(100).default('pt-BR'),cooldown:z.number().min(0).max(3600),duration:z.number().min(3).max(15).default(6),enabled:z.boolean(),priority:z.number().int().min(0).max(100),command:z.string().max(50).default(''),stack:z.boolean().default(false),scene:z.enum(['Principal','Quiz','Intervalo']).default('Quiz'),platform:z.enum(['all','livepix','youtube','tiktok','kwai']).default('all'),startTime:z.string().regex(/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$|^$/).default(''),endTime:z.string().regex(/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$|^$/).default('')});
 app.post('/api/rules',requireAuth,mutate,(req,res)=>{const r=put(req.auth.workspace,'rule',ruleSchema.parse(req.body));log(req.auth.workspace,'Automação criada: '+r.name);res.status(201).json(r);});
 app.put('/api/rules/:id',requireAuth,mutate,(req,res)=>{if(!get(req.auth.workspace,'rule',String(req.params.id))) fail('Automação não encontrada.',404);res.json(put(req.auth.workspace,'rule',ruleSchema.parse(req.body),String(req.params.id)));});
@@ -152,36 +181,37 @@ app.post('/api/jobs/:id/:action',requireAuth,(req,res)=>{
  if(req.auth.role==='moderator'&&!['approve','cancel','pause'].includes(action)) fail('Ação não permitida ao moderador.',403);
  const data=JSON.parse(row.data);let state=row.state;
  if(action==='approve'&&state==='awaiting_approval') state='queued';
- else if(action==='cancel'&&['queued','running','paused','awaiting_approval','awaiting_manual','needs_review'].includes(state)) state='cancelled';
+ else if(action==='cancel'&&(['queued','running','paused','awaiting_approval','awaiting_manual','needs_review'].includes(state)||(row.type==='interaction'&&state==='failed'))) state='cancelled';
  else if(action==='pause'&&state==='queued') state='paused';
  else if(action==='resume'&&state==='paused') state='queued';
- else if(action==='repeat'&&row.type==='interaction'&&['completed','expired','cancelled'].includes(state)) { enqueue(req.auth.workspace,'interaction',{...data,isTest:true},Date.now());log(req.auth.workspace,'Repetição manual de interação (teste).');return res.json({ok:true}); }
+ else if(action==='repeat'&&row.type==='interaction'&&['completed','expired','cancelled','failed'].includes(state)) { enqueue(req.auth.workspace,'interaction',{...data,isTest:true},Date.now());log(req.auth.workspace,'Repetição manual de interação (teste).');return res.json({ok:true}); }
  else if(action==='complete-manual'&&row.type==='publication'&&['awaiting_manual','needs_review'].includes(state)) { const url=z.url().parse(req.body.url);if(new URL(url).protocol!=='https:') fail('Use um link HTTPS.');data.manualUrl=url;state='manually_confirmed'; }
  else fail('Esta ação não é válida para o estado atual.');
  db.prepare('UPDATE jobs SET state=?,data=?,updated=? WHERE id=? AND workspace=?').run(state,JSON.stringify(data),Date.now(),id,req.auth.workspace);log(req.auth.workspace,`Tarefa ${action}: ${data.name||'publicação'}.`);res.json({ok:true});
 });
-const settingsSchema=z.object({goal:z.number().int().min(100).max(100000000),goalName:z.string().min(1).max(80),blockedWords:z.array(z.string().max(60)).max(200),blockLinks:z.boolean(),maxLength:z.number().int().min(20).max(500),manualApproval:z.boolean(),paused:z.boolean(),emergency:z.boolean(),scene:z.enum(['Principal','Quiz','Intervalo']),timezone:z.string().refine(s=>{try{new Intl.DateTimeFormat('pt-BR',{timeZone:s});return true;}catch{return false;}},'Fuso inválido'),retentionDays:z.number().int().min(7).max(365),character:z.enum(['darkbot','nova','pulse','custom']).default('darkbot'),characterArtworkId:z.string().uuid().nullable().default(null),overlayColor:z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#a251ff'),overlayPosition:z.enum(['top-left','top-right','bottom-left']).default('top-left'),rankingVisible:z.boolean().default(false),countdownAt:z.iso.datetime().nullable().default(null)});
+const settingsSchema=z.object({goal:z.number().int().min(100).max(100000000),goalName:z.string().min(1).max(80),blockedWords:z.array(z.string().max(60)).max(200),blockLinks:z.boolean(),maxLength:z.number().int().min(20).max(500),manualApproval:z.boolean(),paused:z.boolean(),emergency:z.boolean(),scene:z.enum(['Principal','Quiz','Intervalo']),goalEnabled:z.boolean().default(false),characterVisible:z.boolean().default(false),timezone:z.string().refine(s=>{try{new Intl.DateTimeFormat('pt-BR',{timeZone:s});return true;}catch{return false;}},'Fuso inválido'),retentionDays:z.number().int().min(7).max(365),character:z.enum(['darkbot','nova','pulse','custom']).default('darkbot'),characterArtworkId:z.string().uuid().nullable().default(null),overlayColor:z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#a251ff'),overlayPosition:z.enum(['top-left','top-right','bottom-left']).default('top-left'),rankingVisible:z.boolean().default(false),countdownAt:z.iso.datetime().nullable().default(null)});
 app.patch('/api/settings',requireAuth,mutate,(req,res)=>{const w=req.auth.workspace,current=settings(w);const values=settingsSchema.parse({...current,...req.body});if(values.characterArtworkId&&!get(w,'artwork',values.characterArtworkId)) fail('Imagem de personagem não encontrada.');const result=put(w,'settings',values,current.id);if(values.emergency) db.prepare("UPDATE jobs SET state='cancelled', updated=? WHERE workspace=? AND type='interaction' AND state IN ('queued','running','paused','awaiting_approval')").run(Date.now(),w);log(w,'Configurações atualizadas.');res.json(result);});
 app.post('/api/overlay/rotate',requireAuth,mutate,(req,res)=>{const w=req.auth.workspace;for(const response of overlayStreams.get(settings(w).overlayToken)||[]) response.end();res.json(put(w,'settings',{overlayToken:randomBytes(40).toString('hex')},settings(w).id));});
 const ruleForToken=(token:string)=>{
  const row=db.prepare("SELECT workspace,data FROM objects WHERE kind='settings' AND json_extract(data,'$.overlayToken')=?").get(token) as any;
  if(!row) fail('Link do overlay inválido ou revogado.',404);return {workspace:row.workspace,config:JSON.parse(row.data)};
 };
-app.get('/api/overlay/:token/state',(req,res)=>{const {workspace,config}=ruleForToken(String(req.params.token));if(serverless){recoverJobs();claimInteraction(workspace);}const current=jobs(workspace).find(j=>j.type==='interaction'&&j.state==='running');const w=db.prepare('SELECT demo FROM workspaces WHERE id=?').get(workspace) as any;
- const events=(db.prepare("SELECT data FROM events WHERE workspace=? AND kind='donation' AND json_extract(data,'$.confirmed')=1 AND (?=1 OR is_test=0)").all(workspace,w.demo) as any[]).map(e=>JSON.parse(e.data));
- const ranking:Record<string,number>={};for(const e of events)ranking[e.user]=(ranking[e.user]||0)+e.amount;
- res.json({polling:serverless,scene:config.scene,emergency:config.emergency,goal:config.goal,goalName:config.goalName,revenue:events.reduce((s,e)=>s+e.amount,0),character:config.character,characterArtworkId:config.characterArtworkId,overlayColor:config.overlayColor,overlayPosition:config.overlayPosition,countdownAt:config.countdownAt,ranking:config.rankingVisible?Object.entries(ranking).sort((a,b)=>b[1]-a[1]).slice(0,5):[],current,quiz:list(workspace,'quiz')[0]||null});});
+app.get('/api/overlay/:token/state',async(req,res)=>{const {workspace,config}=ruleForToken(String(req.params.token));await syncWorkspace(workspace);db.prepare('INSERT INTO leases(key,owner,expires) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET expires=excluded.expires').run('overlay-presence:'+workspace,'overlay',Date.now()+12000);recoverJobs();claimInteraction(workspace);const current=jobs(workspace).find(j=>j.type==='interaction'&&j.state==='running');const w=db.prepare('SELECT demo FROM workspaces WHERE id=?').get(workspace) as any;
+ const financial=db.prepare("SELECT COALESCE(SUM(json_extract(data,'$.amount')),0) AS revenue FROM events WHERE workspace=? AND kind='donation' AND json_extract(data,'$.confirmed')=1 AND is_test=0").get(workspace);
+ const ranking=config.rankingVisible?db.prepare("SELECT json_extract(data,'$.user') AS username,SUM(json_extract(data,'$.amount')) AS total FROM events WHERE workspace=? AND kind='donation' AND json_extract(data,'$.confirmed')=1 AND is_test=0 GROUP BY json_extract(data,'$.user') ORDER BY total DESC LIMIT 5").all(workspace).map(r=>[r.username,r.total]):[];
+ res.json({polling:serverless,scene:config.scene,emergency:config.emergency,goalEnabled:!!config.goalEnabled,goal:config.goal,goalName:config.goalName,revenue:financial.revenue,characterVisible:!!config.characterVisible,character:config.character,characterArtworkId:config.characterArtworkId,overlayColor:config.overlayColor,overlayPosition:config.overlayPosition,countdownAt:config.countdownAt,ranking,current,quiz:list(workspace,'quiz')[0]||null});});
 function claim(workspace:string,req:Request,res:Response) {
  const v=z.object({id:z.string().uuid(),consumer:z.string().uuid()}).parse(req.body);
  const result=db.prepare("UPDATE jobs SET claimed_by=? WHERE id=? AND workspace=? AND state='running' AND type='interaction' AND claimed_by IS NULL").run(v.consumer,v.id,workspace);
  if(!result.changes) fail('Ação já assumida por outro consumidor.',409);res.json({ok:true});
 }
 function ack(workspace:string,req:Request,res:Response) {
- const v=z.object({id:z.string().uuid(),consumer:z.string().uuid()}).parse(req.body);
- db.prepare("UPDATE jobs SET state='completed',updated=? WHERE id=? AND workspace=? AND state='running' AND type='interaction' AND claimed_by=?").run(Date.now(),v.id,workspace,v.consumer);res.json({ok:true});
+ const v=z.object({id:z.string().uuid(),consumer:z.string().uuid(),error:z.string().max(250).optional()}).parse(req.body);
+ db.prepare("UPDATE jobs SET state=?,error=?,updated=? WHERE id=? AND workspace=? AND state='running' AND type='interaction' AND claimed_by=?").run(v.error?'failed':'completed',v.error||null,Date.now(),v.id,workspace,v.consumer);res.json({ok:true});
 }
 app.post('/api/overlay/:token/claim',(req,res)=>{const {workspace}=ruleForToken(String(req.params.token));claim(workspace,req,res);});
 app.post('/api/overlay/:token/ack',(req,res)=>{const {workspace}=ruleForToken(String(req.params.token));ack(workspace,req,res);});
+app.post('/api/player/next',requireAuth,mutate,(req,res)=>res.json({job:claimInteraction(req.auth.workspace,true)}));
 app.post('/api/player/claim',requireAuth,(req,res)=>claim(req.auth.workspace,req,res));
 app.post('/api/player/ack',requireAuth,(req,res)=>ack(req.auth.workspace,req,res));
 

@@ -13,7 +13,7 @@ export async function api<T = any>(path: string, options: RequestInit = {}): Pro
  }
  const response=await fetch('/api'+path,{credentials:'include',...options,headers:options.body instanceof FormData?options.headers:{'Content-Type':'application/json',...options.headers}});
  const value=await response.json().catch(()=>({error:'O servidor não respondeu como esperado.'}));
- if(!response.ok) throw new Error(value.error||'Não foi possível concluir a operação.');if(value.runtime){signedUploads=value.runtime.uploads==='signed';maxUploadBytes=value.runtime.maxUploadBytes;}return value;
+ if(!response.ok) throw Object.assign(new Error(value.error||'Não foi possível concluir a operação.'),{status:response.status});if(value.runtime){signedUploads=value.runtime.uploads==='signed';maxUploadBytes=value.runtime.maxUploadBytes;}return value;
 }
 export const post=(path:string,body:any={})=>api(path,{method:'POST',body:JSON.stringify(body)});
 export const patch=(path:string,body:any)=>api(path,{method:'PATCH',body:JSON.stringify(body)});

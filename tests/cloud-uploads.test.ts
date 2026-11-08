@@ -18,7 +18,7 @@ globalThis.fetch=async(input:any,init:any={})=>{
  if(url.pathname.includes('/object/upload/sign/')){assert.equal(init.headers.apikey,process.env.SUPABASE_SECRET_KEY);assert(!init.headers.Authorization);return Response.json({url:url.pathname.replace('/storage/v1','')+'?token=upload-test'});}
  if(init.method==='POST'&&url.pathname.startsWith('/storage/v1/object/sign/'))return Response.json({signedURL:url.pathname+'?token=download-test'});
  if(init.method==='DELETE'){deletions++;return Response.json({});}
- if(url.searchParams.get('token')==='download-test')return new Response(bytes);
+ if(url.searchParams.get('token')==='download-test')return new Response(new Uint8Array(bytes));
  throw new Error('Unexpected storage operation.');
 };
 after(()=>{globalThis.fetch=originalFetch;db.close();rmSync(process.env.DATA_DIR!,{recursive:true,force:true});});

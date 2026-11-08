@@ -8,7 +8,7 @@ Para operar:
 1. Criar um projeto Google Cloud e habilitar YouTube Data API v3.
 2. Configurar consentimento, audiência e usuários de teste ou obter aprovação para produção.
 3. Criar credenciais OAuth para aplicação web; cadastrar a origem e o retorno exatos.
-4. Injetar os nomes definidos em `.env.example`, sem compartilhar valores em chat.
+4. Salvar Client ID/Secret em Contas → Configurar aplicativo. Também é possível usar as variáveis de `.env.example` como padrão do servidor.
 5. Autorizar uma conta fora da demonstração. Conferir permissões reais e testar com um vídeo privado antes de oferecer publicação pública.
 
 O conector **não foi exercitado com credenciais reais** nesta entrega. A descoberta oficial confirma recursos, mas não comprova aprovação, cotas ou capacidade de publicar para uma conta específica. Projetos não auditados podem ter uploads limitados a privado. Tokens OAuth não comprovam permissão de transmissão.
@@ -19,13 +19,19 @@ O chat só é lido de transmissões ativas acessíveis pela conta autorizada. O 
 
 ## LivePix
 
-A documentação oficial foi acessada após a atualização da política de rede. O fluxo de autorização de identidade por link foi implementado, com state de uso único, retorno vinculado ao usuário e armazenamento cifrado dos tokens. É necessário configurar `LIVEPIX_CLIENT_ID` e `LIVEPIX_CLIENT_SECRET` e registrar a URL de retorno.
+Contrato conferido em `https://api.livepix.gg/open-api.json` e `https://docs.livepix.gg/api/`.
 
-A autorização identifica a conta; o adaptador de pagamentos ainda não foi implementado nem validado com uma conta real.
+O fluxo de pagamentos usa Client Credentials com `account:read`, `payments:read` e `messages:read`. O escopo `webhooks` é opcional: se a solicitação ampla for recusada por escopos, o conector tenta as permissões mínimas de leitura. Antes de gravar uma conexão ativa, consulta `/v2/account`, `/v2/payments` e `/v2/messages` com o token fornecido pela plataforma. Client Secret e tokens ficam cifrados no workspace e não são devolvidos ao frontend.
 
-O motor interno aceita eventos somente por código de integração confiável; a rota pública de teste sempre força `isTest=true`. Não existe rota externa de pagamento que aceite um valor arbitrário e o trate como doação real.
+As consultas paginadas de pagamentos recebidos geram eventos reais em BRL. O ID financeiro, combinado ao ID da conta, impede repetição de doações e ações. Mensagens são associadas pelo comprovante/referência e passam pela moderação local; sinalizações da plataforma também bloqueiam a leitura. Quando o apoiador cobre a tarifa, o valor de contribuição exclui essa tarifa, conforme os campos `coverFees`/`fee` do contrato. As demais moedas não são convertidas implicitamente em reais.
 
-Pendências para implementar o conector: conferir documentação oficial vigente; identificar fluxo de autorização; listar status de pagamento; verificar eventos por assinatura ou consulta autenticada, conforme contrato oficial; impedir replay; reconciliar eventos perdidos; lidar com estornos/reembolsos; testar em ambiente apropriado. Somente então habilitar recebimento real na interface.
+Pagamentos anteriores à primeira conexão não disparam ações. Cada consulta examina no máximo cinco páginas de cem itens por endpoint. O conector não oferece reconciliação ilimitada de histórico nem tratamento de estornos. A receita apresentada representa as contribuições recebidas processadas pela integração, não o saldo líquido da carteira.
+
+Quando autorizado, o sistema registra um webhook de URL aleatória e guarda somente o hash do segredo. O conteúdo do POST externo é ignorado: uma notificação apenas solicita nova consulta à API autenticada. Nenhum payload do navegador ou webhook define o valor confirmado de uma doação. Há deduplicação, limite de requisições e lease de sincronização.
+
+A sincronização pode ocorrer pelo painel, overlay e agendador, com intervalo mínimo de dez segundos. Ao falhar a autorização, a interface informa a necessidade de reconectar; erros não são apresentados como pagamentos recebidos.
+
+O OAuth de identidade existente continua separado e, isoladamente, não habilita pagamentos. O conector financeiro foi validado com respostas controladas e ainda precisa de um teste ponta a ponta autorizado com uma conta LivePix real. Não há credenciais LivePix da conta do usuário configuradas nesta entrega.
 
 ## TikTok e Kwai
 
@@ -37,6 +43,6 @@ O sistema não transmite vídeo por RTMP nem substitui o OBS. Integrações de L
 
 ## Rede
 
-Foram salvos no rascunho do ambiente os domínios: `docs.livepix.gg`, `developers.google.com`, `developers.tiktok.com`, `developers.kwai.com`, `api.livepix.gg`, `oauth.livepix.gg`, `accounts.google.com`, `oauth2.googleapis.com`, `www.googleapis.com`. Os destinos LivePix de operação são requisitos a confirmar no contrato oficial; nenhuma chamada de produção foi feita.
+Foram salvos no rascunho do ambiente os domínios: `docs.livepix.gg`, `developers.google.com`, `developers.tiktok.com`, `developers.kwai.com`, `api.livepix.gg`, `oauth.livepix.gg`, `accounts.google.com`, `oauth2.googleapis.com`, `www.googleapis.com`. Os endpoints LivePix de leitura e autenticação foram conferidos no contrato oficial. Os testes locais não fazem chamadas com credenciais reais.
 
 Os acessos de gerenciamento do Supabase e Vercel foram validados por HTTPS, com credenciais protegidas do ambiente. Nenhuma credencial OAuth das plataformas foi configurada. Os scripts usam `NODE_USE_ENV_PROXY=1` para herdar o proxy e preservar a verificação TLS.

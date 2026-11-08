@@ -1,95 +1,74 @@
 # 00 do Dark
 
-Estúdio web em português para preparar lives interativas, automações, overlays OBS e um calendário de conteúdo. Interface preta e roxa neon inspirada nas cinco referências aprovadas, com um mascote original.
+Estúdio web em português para operar interações, overlays OBS, contas e publicações. O rascunho 0.2 usa uma interface compacta em preto com roxo discreto, login obrigatório e painéis baseados na atividade da conta.
 
-Esta é uma **versão inicial funcional**, não uma entrega de todas as integrações descritas no briefing. O fluxo local tem backend, banco, filas e testes reais. Pagamentos e conexões externas não são simulados como integrações de produção.
+## Rodar localmente
 
-## Rodar
-
-Requisitos: Node.js 24+, npm e `ffprobe` (pacote ffmpeg). O ffmpeg também é usado para gerar o vídeo de teste dos testes de navegador.
+Requisitos: Node.js 24+, npm, Chromium para os testes de navegador e `ffprobe`/`ffmpeg` para validar arquivos e gerar o vídeo de teste.
 
 ```bash
-npm ci --cache /workspace/.npm-cache
+npm ci
 npm run dev
 ```
 
-O Vite usa a porta 5173 e encaminha `/api` ao Node na porta 3001. Na primeira visita é criado um workspace de demonstração privado por sessão. O selo **Demonstração** fica visível. Nenhuma conta externa é autorizada nem vídeo é enviado nesse modo. Para usar dados próprios, abra o perfil e escolha **Entrar ou criar conta**.
+Abra `http://localhost:5173` e crie uma conta. O backend usa a porta 3001. O cadastro cria somente preferências e duas regras editáveis; não cria contas sociais, pagamentos, mensagens, publicações ou transmissões fictícias. Sessões antigas de demonstração voltam à tela de acesso. Em produção, `DEMO_ENABLED=false` desativa o endpoint de demonstração.
 
-A demonstração começa com a fila pausada. Em **Interações**, selecione uma regra e clique em **Testar interação**. O teste libera a fila. Para começar vazio, crie sua própria conta.
+## Operar uma live
 
-## O que funciona
+1. Em **Contas**, configure seu aplicativo YouTube e autorize o canal. Ative a leitura do chat no gerenciamento da conta. A live precisa estar ativa e acessível por esse canal.
+2. Para doações, use **Conectar LivePix** com as credenciais da sua aplicação. O servidor verifica o perfil e as permissões de leitura antes de marcar a integração como conectada.
+3. Em **Interações**, ajuste gatilhos, comandos, valores, prioridade, moderação e cooldown. Os testes são identificados e não entram nas métricas reais.
+4. Em **Central de lives → Configurar OBS**, copie o link privado para uma Fonte de navegador em 1920 × 1080. É possível baixar um JSON de coleção de cenas para importar no OBS.
+5. Configure câmera, microfone e destino no OBS e inicie a transmissão por ele. A câmera/tela aberta dentro do site é uma prévia local; não envia vídeo à plataforma.
 
-- Sete telas responsivas: visão geral, lives, editor de interações, publicações, contas, relatórios e configurações.
-- Cadastro/login, senha derivada por scrypt, sessões HttpOnly, 2FA TOTP e convites com funções de proprietário/operador/moderador. Recuperação de senha depende do SMTP.
-- PostgreSQL no Supabase em produção; SQLite WAL no desenvolvimento local. Migrações, isolamento por workspace, auditoria e leases distribuídos.
-- Editor de regras por evento, valor, comando, prioridade, cooldown, duração e acumulação. Duplicar, editar, salvar, desfazer e excluir regras.
-- Fila persistente, aprovação, pausa, cancelamento e confirmação por consumidor. Apenas um consumidor assume uma ação. Ações sem confirmação expiram; não são repetidas automaticamente.
-- Moderação antes de qualquer ação, inclusive para doações: palavras, links, caracteres e intervalo de mensagens. Uma mensagem bloqueada não é lida. A receita confirmada continua contabilizada independentemente da moderação.
-- Biblioteca de estilos de personagem e upload de arte PNG/JPEG/WebP privada, cores e posição de alertas, contagem regressiva e ranking opcional no overlay.
-- Simulador separado das métricas reais, cenas de prévia, parada de emergência, quiz com comandos `!1`, `!2`, `!3`, votos únicos e pontuação no servidor.
-- Overlay para Fonte de navegador do OBS, link privado revogável, cenas, alertas, animação e fala usando a síntese do navegador. O som precisa ser ativado e depende de vozes pt-BR disponíveis no navegador/OBS. O mascote é uma ilustração animada, sem sincronização labial avançada.
-- Biblioteca de vídeos com validação por ffprobe, armazenamento privado, reprodução autenticada e exclusão.
-- Calendário e lista, rascunhos, modelos de descrição/hashtags, capas personalizadas, textos por conta de destino, fusos IANA, duplicação, reagendamento, cancelamento e status independente por destino.
-- Publicações assistidas geram pendências; sua confirmação manual exige um link e é identificada como manual. Não aparece como resposta de API.
-- Relatórios a partir dos eventos persistidos, filtro e CSV; dados de testes não somam à receita real. O painel mostra até 500 eventos recentes; o CSV inclui o histórico retido.
+O overlay é transparente quando não há conteúdo. Personagem, meta e ranking são opcionais, inicialmente ocultos. Configure-os em **Configurações**. A voz usa a síntese do navegador/OBS e depende das vozes instaladas e da liberação de áudio. Uma falha de voz aparece como falha de execução; não é marcada como sucesso.
 
-## Integrações externas
+A indicação **Overlay ativo** confirma que o link está recebendo atualizações. Ela não comprova que o OBS iniciou uma transmissão. O painel reproduz somente testes explícitos quando o overlay está desconectado; eventos reais pertencem ao consumidor do overlay, evitando que o painel roube a execução.
 
-| Plataforma | Implementado | Dependência / limite |
+## Recursos implementados
+
+- Cadastro, login, sessões HttpOnly, senha derivada por scrypt, 2FA TOTP e equipes com permissões. Recuperação de senha depende de SMTP.
+- PostgreSQL/Supabase em produção e SQLite local. Dados isolados por workspace, auditoria, transações e leases entre instâncias.
+- Regras de doação/chat/seguidores; fila persistente, aprovação, pausa, cancelamento, emergência e confirmação exclusiva por consumidor.
+- Filtros de links, palavras, tamanho e frequência, incluindo mensagens pagas. Receita confirmada é preservada quando uma mensagem é bloqueada.
+- Cenas de overlay, quiz com votos únicos, alertas, som, fala, animações, imagens próprias e link privado revogável.
+- Prévia local de câmera/microfone e compartilhamento de tela com tratamento de permissões e encerramento dos dispositivos.
+- Biblioteca privada de vídeos e imagens com validação real por ffprobe. Calendário semanal/mensal/lista, fusos IANA, rascunhos, capas, hashtags, textos por destino e confirmação manual identificada.
+- Relatórios e CSV. Testes ficam fora da receita e dos indicadores reais; o painel exibe até 500 eventos recentes.
+
+## Integrações
+
+| Plataforma | Disponível no rascunho | Dependências e limites |
 | --- | --- | --- |
-| YouTube | OAuth com PKCE/state, identificação de canais, renovação/revogação, upload resumível, envio de capa e leitura do chat de uma live ativa | Código implementado, mas **sem validação ponta a ponta com conta real**: faltam Client ID/Secret, consentimento e aprovação Google. Uploads seguem cotas e regras da conta/aplicativo. |
-| LivePix | Autorização oficial da identidade por link; simulador separado de eventos e regras | Recebimento real de pagamentos, reconciliação e estornos ainda não implementados. Autorizar identidade não comprova recebimento de doações. |
-| TikTok | Login Kit por link/QR quando configurado, contas assistidas e calendário | Login Kit vincula identidade. Não concede acesso ao TikTok LIVE, chat ou transmissão. Publicação e LIVE exigem produtos e aprovações específicos. |
-| Kwai | Contas assistidas, calendário e confirmação manual | Publicação automática e chat não implementados. Acesso e documentação de parceiro precisam ser confirmados. |
-| OBS | Fonte de navegador para overlay | Não há transporte RTMP, controle remoto de cenas do OBS nem transmissão simultânea. A transmissão é iniciada no OBS/plataforma. |
+| YouTube | OAuth por workspace, renovação/revogação, canais, upload resumível, capa e leitura de chat ativo | Aplicativo Google, escopos e autorização do canal. Ainda sem teste ponta a ponta com credenciais reais. Envio padrão privado. |
+| LivePix | Credenciais cifradas por workspace; consultas autenticadas de pagamentos/mensagens, deduplicação, moderação e webhook que dispara nova consulta | Aplicação LivePix com permissões de leitura. Webhooks são opcionais. Contrato oficial conferido e testes com respostas controladas; validação com conta real permanece pendente. Estornos não implementados. |
+| TikTok | Login Kit de identidade, cadastro manual e planejamento | Login Kit não autoriza LIVE/chat/transmissão. Publicação direta e integração LIVE não implementadas. |
+| Kwai | Contas manuais e planejamento | Envio assistido, sem publicação automática ou chat. |
+| OBS | Overlay transparente, link revogável e exportação de cena | O envio RTMP acontece no OBS. Não há controle remoto do OBS nem retransmissão de vídeo pelo servidor. |
 
-A fonte oficial utilizada para conferir os recursos YouTube foi o documento de descoberta mantido em [googleapis/google-api-go-client](https://github.com/googleapis/google-api-go-client/blob/main/youtube/v3/youtube-api.json). As páginas de documentação completas ainda dependem da liberação de rede. Veja [docs/integrations.md](docs/integrations.md).
+As credenciais OAuth podem ser salvas pelo proprietário em **Contas → Configurar aplicativo**, cifradas e isoladas por workspace. Variáveis de servidor continuam disponíveis como padrão. Segredos não são retornados pela API de estado. Consulte [docs/integrations.md](docs/integrations.md).
 
-## Configuração
+## Persistência e publicação
 
-Copie `.env.example` para `.env` se precisar alterar os padrões. Nunca versione `.env`. `APP_ORIGIN` deve ser a origem exata usada no navegador. Em desenvolvimento, localhost/127.0.0.1 nas portas 5173 e 3001 também são aceitos. Produção aceita somente `APP_ORIGIN` e exige HTTPS para os cookies.
+A configuração existente usa Vercel Hobby e o projeto Supabase **00 do dark**, com PostgreSQL, mídia privada e agendador a cada minuto. O domínio configurado é `https://00-do-dark.vercel.app`. A presença do código neste rascunho não significa que ele já foi publicado nesse domínio.
 
-Para OAuth YouTube, configure `YOUTUBE_CLIENT_ID` e `YOUTUBE_CLIENT_SECRET` no servidor e cadastre o retorno `APP_ORIGIN/api/connect/youtube/callback` no Google Cloud. Use a opção **Autorizar pelo Google** em uma conta própria, fora da demonstração. Nenhuma senha de rede social é solicitada.
+O orçamento de mídia é 900 MiB; vídeos até 50 MiB e imagens até 10 MiB. Painel e overlay consultam atualizações a cada 4 e 2,5 segundos. O intervalo mínimo de sincronização das integrações é 10 segundos, respeitando intervalos maiores informados pela plataforma.
 
-O SMTP usa `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM` e, quando necessário, `SMTP_USER`/`SMTP_PASSWORD`. Sem SMTP, o sistema informa que recuperação não está configurada; nenhum e-mail é fingido.
+Veja [docs/deployment.md](docs/deployment.md). A publicação deve ser executada somente quando autorizada. O script não cria serviços pagos nem redefine a senha principal do banco.
 
-## Produção e dados
-
-Para Vercel com API persistente, consulte [docs/deployment.md](docs/deployment.md).
-A publicação usa Vercel Hobby e o projeto Supabase existente, com PostgreSQL, bucket privado e agendamento por `pg_cron`. Nenhum recurso pago é criado. O domínio é [00-do-dark.vercel.app](https://00-do-dark.vercel.app).
-
-O comparador visual fica em `artifacts/visual/comparison.html`; os prints finais
-das cinco telas ficam em `artifacts/visual/final/`.
-
-```bash
-npm run build
-# Configure APP_ORIGIN=https://seu-dominio e persistência antes de iniciar.
-npm start
-```
-
-O Express serve `dist` e `/api` na porta 3001. Use proxy reverso TLS. Ative `TRUST_PROXY=1` somente com um proxy confiável e porta do Node não exposta diretamente. Configure também os cabeçalhos e limites de upload do proxy (até 512 MB). Mantenha o processo com systemd/serviço equivalente.
-
-Na Vercel, os dados ficam no PostgreSQL e Supabase Storage; `/tmp` é usado apenas durante a validação e o envio de arquivos. Vídeos têm limite de 50 MiB e imagens de 10 MiB, com orçamento de armazenamento de 900 MiB. O agendador executa aproximadamente a cada minuto; painel e overlay usam consultas periódicas. Veja os limites e a configuração em [docs/deployment.md](docs/deployment.md).
-
-A alternativa local usa uma única instância com SQLite e disco persistente. `npm run backup` faz backup consistente do SQLite. No PostgreSQL, use as ferramentas do provedor ou `pg_dump` e inclua a mídia privada no plano de recuperação. Preserve `ENCRYPTION_KEY` de forma segura: sem ela, tokens OAuth e segredos TOTP não podem ser recuperados. A restauração completa em outro host ainda não foi validada.
-
-A limpeza periódica remove demonstrações após 24 horas, sessões/links expirados, uploads pendentes e histórico além da retenção. A exclusão integral de conta e o monitoramento operacional devem ser ampliados antes de operação comercial.
+Para uso local com SQLite, preserve o diretório `var/` e `ENCRYPTION_KEY`; `npm run backup` faz backup consistente. Para PostgreSQL, use as ferramentas do provedor ou `pg_dump` e inclua os objetos privados na recuperação. A restauração completa ainda não foi validada.
 
 ## Validação
 
 ```bash
 npm run build
 npm test
-# Com npm run dev em execução e Chromium instalado:
+# Com npm run dev em execução:
 npm run test:e2e
 ```
 
-Os testes de navegador geram seu próprio vídeo de um segundo em uma pasta temporária usando ffmpeg. Não enviam conteúdo às plataformas. Os testes cobrem navegação desktop/mobile, persistência de regras, execução de teste, calendário e upload/reprodução real de um vídeo local.
+Os testes de navegador cadastram contas locais, usam um vídeo de um segundo e dispositivos de captura de teste do Chromium. Verificam login sem atividade inventada, persistência, upload, agendamento manual, execução exclusiva no overlay, transparência e navegação mobile. Não transmitem para redes sociais nem criam pagamentos reais.
 
-Os testes de servidor verificam autenticação, isolamento entre usuários, roles, TOTP, deduplicação, confirmação de pagamentos no motor interno, moderação, cooldown, justiça da fila, confirmação exclusiva, persistência em outro processo, emergência, revogação do overlay, agendamento, fusos, upload inválido e confirmação manual sem falso sucesso remoto.
+Os testes do conector LivePix usam respostas controladas para verificar permissões, deduplicação, taxas cobertas pelo apoiador, moedas, pagamentos históricos, moderação e proteção dos segredos. Não substituem um teste autorizado com a conta real.
 
-## Fora desta versão
-
-Faltam: adaptador LivePix real e estornos, conectores automáticos TikTok/Kwai, personagens com rigging 3D/expressões avançadas, TTS de servidor, sincronização labial, geração/recorte de vídeos, IA, notificações externas, monitoramento operacional completo, métricas de espectadores e receita obtidas diretamente das plataformas. Não são apresentados como recursos concluídos.
-
-Nenhum sistema garante ausência de banimento. O projeto não resolve CAPTCHAs nem contorna verificações, limites ou punições. Verificações devem ser concluídas pelo titular nos fluxos oficiais.
+Ainda faltam transmissão direta do servidor, conectores LIVE TikTok/Kwai, publicação automática nessas plataformas, estornos LivePix, TTS de servidor e sincronização labial. O sistema não garante ausência de restrições e não contorna verificações das plataformas.

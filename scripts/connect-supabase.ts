@@ -51,7 +51,7 @@ export async function configureSupabase(){
  if(!secret?.api_key||!publishable?.api_key)throw new Error('As chaves secret e publishable não estão disponíveis.');
  const existing=await vercelManagement('/v9/projects/'+project.projectId+'/env');
  const envs=new Map<string,any>(existing.envs.filter((e:any)=>e.target?.includes('production')).map((e:any)=>[e.key,e]));
- const values:Record<string,string>={POSTGRES_URL:connection.href,SUPABASE_URL:'https://'+ref+'.supabase.co',SUPABASE_SECRET_KEY:secret.api_key,SUPABASE_PUBLISHABLE_KEY:publishable.api_key,CRON_SECRET:credentials.cronSecret,APP_ORIGIN:'https://'+project.domains[0],DATA_DIR:'/tmp/00-do-dark',DARK_SERVERLESS:'1'};
+ const values:Record<string,string>={POSTGRES_URL:connection.href,SUPABASE_URL:'https://'+ref+'.supabase.co',SUPABASE_SECRET_KEY:secret.api_key,SUPABASE_PUBLISHABLE_KEY:publishable.api_key,CRON_SECRET:credentials.cronSecret,APP_ORIGIN:'https://'+project.domains[0],DATA_DIR:'/tmp/00-do-dark',DARK_SERVERLESS:'1',DEMO_ENABLED:'false'};
  if(!envs.has('ENCRYPTION_KEY'))values.ENCRYPTION_KEY=credentials.encryptionKey;
  for(const [key,value] of Object.entries(values)){
   const existing=envs.get(key);

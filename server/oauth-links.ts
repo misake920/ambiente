@@ -3,19 +3,20 @@ import {z} from 'zod';
 import {db,list,put,transaction,log} from './db.ts';
 import {encrypt,decrypt,hash} from './security.ts';
 import {origin} from './config.ts';
+import {oauthConfig,hasOAuth} from './connector-config.ts';
 
 export const linkProviders={
  tiktok:{key:'TIKTOK_CLIENT_KEY',secret:'TIKTOK_CLIENT_SECRET',authorize:'https://www.tiktok.com/v2/auth/authorize/',token:'https://open.tiktokapis.com/v2/oauth/token/',scope:'user.info.basic',profile:'https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name,avatar_url'},
  livepix:{key:'LIVEPIX_CLIENT_ID',secret:'LIVEPIX_CLIENT_SECRET',authorize:'https://oauth.livepix.gg/oauth2/auth',token:'https://oauth.livepix.gg/oauth2/token',scope:'account:read offline',profile:'https://api.livepix.gg/v2/account'},
 } as const;
 export type LinkProvider=keyof typeof linkProviders;
-export const linkConfigured=(provider:LinkProvider)=>!!process.env[linkProviders[provider].key]&&!!process.env[linkProviders[provider].secret];
+export const linkConfigured=(provider:LinkProvider,workspace?:string)=>hasOAuth(provider,workspace);
 export function beginLink(provider:LinkProvider,workspace:string,user:string|null){
  if(!user)throw Object.assign(new Error('Entre em uma conta própria para vincular plataformas.'),{status:409});
- if(!linkConfigured(provider))throw Object.assign(new Error(`Configure ${linkProviders[provider].key} e ${linkProviders[provider].secret} no servidor para gerar o link oficial.`),{status:409});
+ if(!linkConfigured(provider,workspace))throw Object.assign(new Error(`Configure ${linkProviders[provider].key} e ${linkProviders[provider].secret} no servidor para gerar o link oficial.`),{status:409});
  const state=randomBytes(32).toString('hex'),p=linkProviders[provider];
  db.prepare('INSERT INTO one_time VALUES(?,?,?,?,?,?)').run(hash(state),user,workspace,'oauth-'+provider,'{}',Date.now()+600000);
- const url=new URL(p.authorize);url.searchParams.set(provider==='tiktok'?'client_key':'client_id',process.env[p.key]!);
+ const url=new URL(p.authorize);url.searchParams.set(provider==='tiktok'?'client_key':'client_id',oauthConfig(provider,workspace).clientId);
  for(const [key,value] of Object.entries({response_type:'code',redirect_uri:origin+`/api/connect/${provider}/callback`,scope:p.scope,state}))url.searchParams.set(key,value);
  return url.href;
 }
@@ -36,7 +37,7 @@ const tokensSchema=z.object({access_token:z.string().min(1),refresh_token:z.stri
 export async function finishLink(provider:LinkProvider,workspace:string,user:string|null,state:string,code:string){
  consumeState(provider,workspace,user,state);
  const p=linkProviders[provider];
- const tokens=tokensSchema.parse(await remoteJSON(p.token,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({[provider==='tiktok'?'client_key':'client_id']:process.env[p.key]!,client_secret:process.env[p.secret]!,grant_type:'authorization_code',code,redirect_uri:origin+`/api/connect/${provider}/callback`})}));
+ const tokens=tokensSchema.parse(await remoteJSON(p.token,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({[provider==='tiktok'?'client_key':'client_id']:oauthConfig(provider,workspace).clientId,client_secret:oauthConfig(provider,workspace).clientSecret,grant_type:'authorization_code',code,redirect_uri:origin+`/api/connect/${provider}/callback`})}));
  const profile=await remoteJSON(p.profile,{headers:{Authorization:'Bearer '+tokens.access_token}});
  const data=provider==='tiktok'?profile.data?.user:profile.data;
  const id=z.string().min(1).parse(provider==='tiktok'?data?.open_id:data?.id);
@@ -48,10 +49,10 @@ export async function finishLink(provider:LinkProvider,workspace:string,user:str
  log(workspace,`Identidade ${provider==='tiktok'?'TikTok':'LivePix'} vinculada por OAuth. Acesso LIVE/pagamentos não é presumido.`);
  return account;
 }
-export async function revokeTikTok(account:any){
+export async function revokeTikTok(account:any,workspace?:string){
  if(account.platform!=='tiktok'||!account.tokens)return;
  const tokens=JSON.parse(decrypt(account.tokens));
- await remoteJSON('https://open.tiktokapis.com/v2/oauth/revoke/',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_key:process.env.TIKTOK_CLIENT_KEY||'',client_secret:process.env.TIKTOK_CLIENT_SECRET||'',token:tokens.access_token})});
+ await remoteJSON('https://open.tiktokapis.com/v2/oauth/revoke/',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_key:oauthConfig('tiktok',workspace).clientId,client_secret:oauthConfig('tiktok',workspace).clientSecret,token:tokens.access_token})});
 }
 export function validatePlatformLink(platform:string,value:string){
  if(!value)return '';

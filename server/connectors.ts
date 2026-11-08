@@ -8,18 +8,19 @@ import { ingest } from './engine.ts';
 import {linkConfigured,revokeTikTok} from './oauth-links.ts';
 import {materialize} from './cloud-storage.ts';
 import {serverless} from './runtime.ts';
+import {oauthConfig,hasOAuth} from './connector-config.ts';
 
-export const capabilities = () => [
- { id:'youtube', name:'YouTube', oauth:!!process.env.YOUTUBE_CLIENT_ID && !!process.env.YOUTUBE_CLIENT_SECRET, publishing:true, chat:true, transmission:false, description:'OAuth oficial, upload de vídeos e leitura do chat de uma live ativa. Requer projeto Google e consentimento aprovado.', docs:'https://developers.google.com/youtube/v3' },
- { id:'tiktok', name:'TikTok', oauth:linkConfigured('tiktok'), linking:true, publishing:false, chat:false, transmission:false, description:'Vinculação oficial por link com Login Kit. Autoriza a identidade da conta; chat e transmissão LIVE exigem acesso próprio e não são liberados por esse login. Publicação direta exige aprovação separada.', docs:'https://developers.tiktok.com/doc/login-kit-web' },
+export const capabilities = (workspace?:string) => [
+ { id:'youtube', name:'YouTube', oauth:hasOAuth('youtube',workspace), publishing:true, chat:true, transmission:false, description:'OAuth oficial, upload de vídeos e leitura do chat de uma live ativa. Requer projeto Google e consentimento aprovado.', docs:'https://developers.google.com/youtube/v3' },
+ { id:'tiktok', name:'TikTok', oauth:linkConfigured('tiktok',workspace), linking:true, publishing:false, chat:false, transmission:false, description:'Vinculação oficial por link com Login Kit. Autoriza a identidade da conta; chat e transmissão LIVE exigem acesso próprio e não são liberados por esse login. Publicação direta exige aprovação separada.', docs:'https://developers.tiktok.com/doc/login-kit-web' },
  { id:'kwai', name:'Kwai', oauth:false, publishing:false, chat:false, transmission:false, description:'Fluxo assistido disponível. Acesso parceiro e documentação aplicável precisam ser confirmados antes de habilitar automação.', docs:'https://www.kwai.com/' },
- { id:'livepix', name:'LivePix', oauth:linkConfigured('livepix'), linking:true, publishing:false, chat:false, transmission:false, payments:false, description:'Vinculação de identidade por OAuth oficial disponível quando o aplicativo é configurado. Recebimento real de pagamentos ainda não está habilitado.', docs:'https://docs.livepix.gg/api' },
+ { id:'livepix', name:'LivePix', oauth:linkConfigured('livepix',workspace), linking:true, publishing:false, chat:false, transmission:false, payments:true, credentials:true, description:'Consulta autenticada de pagamentos e mensagens, com deduplicação. Conecte as credenciais da sua aplicação LivePix.', docs:'https://docs.livepix.gg/api' },
 ];
 export function youtubeStart(workspace: string, user: string | null) {
- if (!capabilities()[0].oauth) throw Object.assign(new Error('Configure YOUTUBE_CLIENT_ID e YOUTUBE_CLIENT_SECRET no servidor para conectar sua conta.'),{status:409});
+ if (!capabilities(workspace)[0].oauth) throw Object.assign(new Error('Configure YOUTUBE_CLIENT_ID e YOUTUBE_CLIENT_SECRET no servidor para conectar sua conta.'),{status:409});
  const state = randomBytes(32).toString('hex'), verifier=randomBytes(48).toString('base64url');
  db.prepare('INSERT INTO one_time VALUES(?,?,?,?,?,?)').run(hash(state),user,workspace,'oauth',JSON.stringify({verifier}),Date.now()+600000);
- const params = new URLSearchParams({client_id:process.env.YOUTUBE_CLIENT_ID!,redirect_uri:origin+'/api/connect/youtube/callback',response_type:'code',scope:'https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/youtube.upload',state,access_type:'offline',prompt:'consent',code_challenge:createHash('sha256').update(verifier).digest('base64url'),code_challenge_method:'S256'});
+ const params = new URLSearchParams({client_id:oauthConfig('youtube',workspace).clientId,redirect_uri:origin+'/api/connect/youtube/callback',response_type:'code',scope:'https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/youtube.upload',state,access_type:'offline',prompt:'consent',code_challenge:createHash('sha256').update(verifier).digest('base64url'),code_challenge_method:'S256'});
  return 'https://accounts.google.com/o/oauth2/v2/auth?'+params;
 }
 async function checked(url: string, init: RequestInit = {}) {
@@ -31,7 +32,7 @@ export async function youtubeCallback(workspace:string,user:string|null,state:st
  const record=db.prepare("SELECT * FROM one_time WHERE token=? AND workspace=? AND kind='oauth' AND expires>?").get(hash(state),workspace,Date.now()) as any;
  if(!record || record.user!==user) throw Object.assign(new Error('Autorização inválida ou expirada.'),{status:400});
  db.prepare('DELETE FROM one_time WHERE token=?').run(hash(state));
- const tokens=await (await checked('https://oauth2.googleapis.com/token',{method:'POST',body:new URLSearchParams({client_id:process.env.YOUTUBE_CLIENT_ID!,client_secret:process.env.YOUTUBE_CLIENT_SECRET!,code,code_verifier:JSON.parse(record.data).verifier,grant_type:'authorization_code',redirect_uri:origin+'/api/connect/youtube/callback'})})).json();
+ const tokens=await (await checked('https://oauth2.googleapis.com/token',{method:'POST',body:new URLSearchParams({client_id:oauthConfig('youtube',workspace).clientId,client_secret:oauthConfig('youtube',workspace).clientSecret,code,code_verifier:JSON.parse(record.data).verifier,grant_type:'authorization_code',redirect_uri:origin+'/api/connect/youtube/callback'})})).json();
  const result=await (await checked('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true',{headers:{Authorization:`Bearer ${tokens.access_token}`}})).json();
  if(!result.items?.length) throw new Error('Nenhum canal do YouTube encontrado.');
  const {list}=await import('./db.ts');
@@ -45,13 +46,13 @@ export async function youtubeToken(workspace:string, account:any) {
  const tokens=JSON.parse(decrypt(account.tokens));
  if(tokens.expires_at>Date.now()+60000) return tokens.access_token as string;
  try {
-  const refreshed=await (await checked('https://oauth2.googleapis.com/token',{method:'POST',body:new URLSearchParams({client_id:process.env.YOUTUBE_CLIENT_ID!,client_secret:process.env.YOUTUBE_CLIENT_SECRET!,refresh_token:tokens.refresh_token||'',grant_type:'refresh_token'})})).json();
+  const refreshed=await (await checked('https://oauth2.googleapis.com/token',{method:'POST',body:new URLSearchParams({client_id:oauthConfig('youtube',workspace).clientId,client_secret:oauthConfig('youtube',workspace).clientSecret,refresh_token:tokens.refresh_token||'',grant_type:'refresh_token'})})).json();
   put(workspace,'account',{tokens:encrypt(JSON.stringify({...tokens,...refreshed,expires_at:Date.now()+refreshed.expires_in*1000})),status:'connected'},account.id);
   return refreshed.access_token as string;
  } catch(e) { put(workspace,'account',{status:'expired'},account.id);throw e; }
 }
 export async function revoke(workspace:string,account:any) {
- if(account.platform==='tiktok')await revokeTikTok(account);
+ if(account.platform==='tiktok')await revokeTikTok(account,workspace);
  if(account.tokens && account.platform==='youtube') { const token=JSON.parse(decrypt(account.tokens));await checked('https://oauth2.googleapis.com/revoke',{method:'POST',body:new URLSearchParams({token:token.refresh_token||token.access_token})}); }
 }
 export async function publishYouTube(workspace:string,account:any,publication:any,jobId:string) {
