@@ -23,3 +23,5 @@
 
 /* Keep incoming alerts below the model title, including vertical output. */
 .obs-overlay.has-model>.obs-alert{top:17%;bottom:auto;left:6%;right:auto;width:min(88%,540px);max-width:88%;box-sizing:border-box}.obs-overlay.has-model>.obs-alert strong{white-space:normal;overflow-wrap:anywhere}.obs-overlay.has-model .model-hud-top{z-index:1}.model-reaction>strong{overflow:hidden;text-overflow:ellipsis;min-width:0}.model-reaction>span{flex-shrink:0}
+
+.library-pagination{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:20px 0 4px;font-size:10px;color:#b79bc9}.library-pagination>div{display:flex;gap:8px}.library-pagination .button{min-width:80px}

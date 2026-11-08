@@ -21,7 +21,7 @@ Comandos correspondem à primeira palavra da mensagem, sem diferenciar maiúscul
 
 As ações entram na fila existente com prioridade 50 e duração de três segundos. A configuração de regras anterior permanece disponível. O progresso só é atualizado dentro da transação que concede a execução a um único consumidor. Outra janela não pode reaplicar a mesma ação. Encerrar a sessão cancela suas ações pendentes e em execução. Eventos explicitamente marcados como teste animam temporariamente o cenário, mas não alteram o progresso real nem a receita. Os pontos e objetos do modelo não são valores financeiros.
 
-Os cenários limitam a quantidade de geometria visível para manter a renderização leve; os contadores preservam os totais executados da sessão. Cenas da galeria são estáticas; a prévia e a saída usam animação, respeitando a preferência por redução de movimento. Modelos podem ser exportados e importados em JSON (até 64 KB na interface), sempre validados pelo servidor. A importação permite configurar os seis cenários existentes; não executa HTML, scripts ou arquivos 3D externos.
+Os cenários limitam a quantidade de geometria visível para manter a renderização leve; os contadores preservam os totais executados da sessão. A galeria mostra até seis modelos por página para limitar contextos WebGL, inclusive quando há dezenas de modelos salvos. Cenas da galeria são estáticas; a prévia e a saída usam animação, respeitando a preferência por redução de movimento. Modelos podem ser exportados e importados em JSON (até 64 KB na interface), sempre validados pelo servidor. A importação permite configurar os seis cenários existentes; não executa HTML, scripts ou arquivos 3D externos.
 
 ## Entrada de chat externo
 
