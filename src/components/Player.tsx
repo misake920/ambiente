@@ -1,11 +1,11 @@
 import {useEffect,useRef} from 'react';
 import type {Obj} from '../types';
 import {post} from '../api';
-export function usePlayer(job:Obj|null,audio:boolean,token:string|null,onActive:(v:Obj|null)=>void){
+export function usePlayer(job:Obj|null,audio:boolean,token:string|null,onActive:(v:Obj|null)=>void,modelReady=true){
  const consumer=useRef(crypto.randomUUID()),seen=useRef(new Set<string>()),enabled=useRef(audio),sound=useRef<AudioContext|null>(null);enabled.current=audio;
  const stopSound=()=>{const value=sound.current;sound.current=null;if(value&&value.state!=='closed')void value.close().catch(()=>{});};
  useEffect(()=>{
-  if(!job||seen.current.has(job.id))return;seen.current.add(job.id);
+  if(!job||seen.current.has(job.id)||(job.data.action==='model'&&!modelReady))return;seen.current.add(job.id);
   let cancelled=false,finished=false,timer:ReturnType<typeof setTimeout>|undefined,watchdog:ReturnType<typeof setTimeout>|undefined;
   const base=token?'/overlay/'+token:'/player';
   const finish=(error?:string)=>{if(cancelled||finished)return;finished=true;if(timer)clearTimeout(timer);if(watchdog)clearTimeout(watchdog);window.speechSynthesis?.cancel();stopSound();onActive(null);void post(base+'/ack',{id:job.id,consumer:consumer.current,error}).catch(()=>{});};
@@ -24,6 +24,6 @@ export function usePlayer(job:Obj|null,audio:boolean,token:string|null,onActive:
    afterMinimum();
   }).catch(()=>{});
   return()=>{cancelled=true;if(timer)clearTimeout(timer);if(watchdog)clearTimeout(watchdog);window.speechSynthesis?.cancel();stopSound();onActive(null);};
- },[job?.id,token]);
+ },[job?.id,token,modelReady]);
  useEffect(()=>{if(!audio){stopSound();window.speechSynthesis?.cancel();}},[audio]);
 }

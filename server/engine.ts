@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { db, list, put, settings, transaction, log } from './db.ts';
+import {matchModel} from './model-runtime.ts';
 export type IncomingEvent = { externalId: string; provider: string; kind: 'donation' | 'chat' | 'follow' | 'gift'; user: string; message: string; amount: number; confirmed: boolean; isTest: boolean; ruleId?: string; blockedReason?:string; receivedAt?:number;liveId?:string;giftQuantity?:number;giftType?:string };
 const normalize = (text: string) => text.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 export function moderate(message: string, config: any): string | null {
@@ -13,8 +14,9 @@ export function enqueue(workspace: string, type: string, data: any, due = Date.n
   db.prepare('INSERT INTO jobs(id,workspace,type,state,data,due,created,updated) VALUES(?,?,?,?,?,?,?,?)').run(id, workspace, type, state, JSON.stringify(data), due, now, now);
   return id;
 }
-export function ingest(workspace: string, input: IncomingEvent) {
+export function ingest(workspace: string, input: IncomingEvent, authorize?:()=>void) {
   return transaction(() => {
+    authorize?.();
     const found = db.prepare('SELECT id,data FROM events WHERE workspace=? AND provider=? AND external_id=?').get(workspace, input.provider, input.externalId) as any;
     if (found && (JSON.parse(found.data).confirmed || !input.confirmed)) return { duplicate: true, actions: [] as string[] };
     const eventId = found?.id || randomUUID(), now = Date.now(), config = settings(workspace);
@@ -43,6 +45,7 @@ export function ingest(workspace: string, input: IncomingEvent) {
     const localTime=new Intl.DateTimeFormat('en-GB',{timeZone:config.timezone,hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(now);
     const rules = list(workspace, 'rule').filter(r => (!input.isTest || !input.ruleId || r.id === input.ruleId) && r.enabled && (input.isTest || !r.platform || r.platform==='all' || r.platform===input.provider) && (!r.startTime || !r.endTime || (r.startTime<=r.endTime ? localTime>=r.startTime&&localTime<=r.endTime : localTime>=r.startTime||localTime<=r.endTime)) && r.trigger === input.kind && (input.kind !== 'donation' || input.amount >= Math.round(r.minAmount * 100)) && (!r.command || input.message.startsWith(r.command))).sort((a,b) => b.priority-a.priority);
     const actions: string[] = [];
+    const model=matchModel(workspace,input,eventId);if(model)actions.push(enqueue(workspace,'interaction',model,now,config.manualApproval?'awaiting_approval':'queued'));
     for (const rule of rules) {
       const cooldownKey = `${rule.id}:${normalize(input.user)}`;
       const last = list(workspace, 'cooldown').find(c => c.key === cooldownKey);
@@ -71,8 +74,9 @@ export function claimInteraction(workspace: string,testsOnly=false) {
     const config = settings(workspace);
     if (config.paused || config.emergency) return null;
     if (db.prepare("SELECT id FROM jobs WHERE workspace=? AND type='interaction' AND state='running'").get(workspace)) return null;
+    const modelScene=config.scene==='Principal'?'':" AND (json_extract(data,'$.action') IS NULL OR json_extract(data,'$.action')<>'model')";
     // Aging guarantees that chat actions eventually outrank recent high-priority donations.
-    const row = db.prepare("SELECT * FROM jobs WHERE workspace=? AND type='interaction' AND state='queued' AND due<=? "+(testsOnly?" AND CAST(json_extract(data,'$.isTest') AS TEXT) IN ('true','1')":"")+" ORDER BY (json_extract(data,'$.priority') + (? - created)/1000.0) DESC, created LIMIT 1").get(workspace, Date.now(), Date.now()) as any;
+    const row = db.prepare("SELECT * FROM jobs WHERE workspace=? AND type='interaction' AND state='queued' AND due<=? "+(testsOnly?" AND CAST(json_extract(data,'$.isTest') AS TEXT) IN ('true','1')":"")+modelScene+" ORDER BY (json_extract(data,'$.priority') + (? - created)/1000.0) DESC, created LIMIT 1").get(workspace, Date.now(), Date.now()) as any;
     if (!row) return null;
     const data = JSON.parse(row.data), now = Date.now();
     db.prepare("UPDATE jobs SET state='running', attempts=attempts+1, lease=?, claimed_by=NULL, updated=? WHERE id=? AND state='queued'").run(now + (data.action==='speak'?105:data.duration+15)*1000, now, row.id);

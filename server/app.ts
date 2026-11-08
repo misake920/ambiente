@@ -27,6 +27,9 @@ import {connectLivePix,disconnectLivePix} from './livepix.ts';
 import {syncWorkspace} from './integration-sync.ts';
 import {saveOAuth} from './connector-config.ts';
 import {revenueSeries,audienceMetrics} from './analytics.ts';
+import {registerModelRoutes} from './model-routes.ts';
+import {registerChatBridges,publicBridges} from './chat-bridges.ts';
+import {modelCatalog,activeModel,applyModelJob,stopModelJobs} from './model-runtime.ts';
 
 declare global { namespace Express { interface Request { auth: { user: string | null; workspace: string; demo: boolean; role: string; name: string; email: string | null }; } } }
 export const app=express();
@@ -64,6 +67,8 @@ const role=(...roles:string[])=>(req:Request,res:Response,next:NextFunction)=>ro
 const mutate=role('owner','operator');
 const owner=role('owner');
 registerCloudUploads(app,requireAuth,mutate);
+registerModelRoutes(app,requireAuth,mutate);
+registerChatBridges(app,requireAuth,mutate);
 registerCloudSetup(app);
 const totp=(secret:string,email:string)=>new OTPAuth.TOTP({issuer:'00 do Dark',label:email,algorithm:'SHA1',digits:6,period:30,secret});
 const credentials=z.object({email:z.email().max(254).transform(s=>s.toLowerCase()),password:z.string().min(10).max(128),name:z.string().trim().min(2).max(60).optional(),code:z.string().max(10).optional()});
@@ -142,7 +147,7 @@ app.get('/api/state',requireAuth,async(req,res)=>{
  const members=db.prepare('SELECT u.id,u.name,u.email,m.role FROM members m JOIN users u ON u.id=m.user WHERE m.workspace=?').all(w);
  const revenue=revenueSeries(w),audience=audienceMetrics(w);
  res.json({demoMetrics:req.auth.demo?list(w,'demo-metrics')[0]:undefined,runtime:{polling:serverless,uploads:cloudStorageConfigured()?'signed':'local',maxUploadBytes:cloudStorageConfigured()?cloudMediaLimit:512*1024*1024,overlayConnected},settings:config,accounts:list(w,'account').map(publicAccount),integrations:list(w,'integration').map(publicAccount),rules:list(w,'rule'),publications:list(w,'publication'),media:list(w,'media'),artworks:list(w,'artwork'),templates:list(w,'template'),lives:list(w,'live'),quiz:list(w,'quiz')[0]||null,scores:list(w,'score'),events:allEvents,jobs:jobs(w),audit:db.prepare('SELECT * FROM audit WHERE workspace=? ORDER BY created DESC LIMIT 50').all(w),members,
-  dashboard:{revenue,audience},stats:{revenue:financialTotals.revenue,donations:financialTotals.donations,todayRevenue:revenue.total,chatMessages:db.prepare("SELECT COUNT(*) AS total FROM events WHERE workspace=? AND kind='chat' AND is_test=0").get(w).total,interactions:db.prepare("SELECT COUNT(*) AS total FROM jobs WHERE workspace=? AND type='interaction' AND state='completed' AND CAST(json_extract(data,'$.isTest') AS TEXT) IN ('false','0')").get(w).total,blocked:allEvents.filter(e=>!e.is_test&&e.data.status==='blocked').length},capabilities:capabilities(req.auth.workspace)});
+  chatBridges:publicBridges(w),liveModels:modelCatalog(w),dashboard:{revenue,audience},stats:{revenue:financialTotals.revenue,donations:financialTotals.donations,todayRevenue:revenue.total,chatMessages:db.prepare("SELECT COUNT(*) AS total FROM events WHERE workspace=? AND kind='chat' AND is_test=0").get(w).total,interactions:db.prepare("SELECT COUNT(*) AS total FROM jobs WHERE workspace=? AND type='interaction' AND state='completed' AND CAST(json_extract(data,'$.isTest') AS TEXT) IN ('false','0')").get(w).total,blocked:allEvents.filter(e=>!e.is_test&&e.data.status==='blocked').length},capabilities:capabilities(req.auth.workspace)});
 });
 
 app.post('/api/connectors/:provider',requireAuth,owner,(req,res)=>{
@@ -201,11 +206,12 @@ const ruleForToken=(token:string)=>{
 app.get('/api/overlay/:token/state',async(req,res)=>{const {workspace,config}=ruleForToken(String(req.params.token));await syncWorkspace(workspace);db.prepare('INSERT INTO leases(key,owner,expires) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET expires=excluded.expires').run('overlay-presence:'+workspace,'overlay',Date.now()+12000);recoverJobs();claimInteraction(workspace);const current=jobs(workspace).find(j=>j.type==='interaction'&&j.state==='running');const w=db.prepare('SELECT demo FROM workspaces WHERE id=?').get(workspace) as any;
  const financial=db.prepare("SELECT COALESCE(SUM(json_extract(data,'$.amount')),0) AS revenue FROM events WHERE workspace=? AND kind='donation' AND json_extract(data,'$.confirmed')=1 AND is_test=0").get(workspace);
  const ranking=config.rankingVisible?db.prepare("SELECT json_extract(data,'$.user') AS username,SUM(json_extract(data,'$.amount')) AS total FROM events WHERE workspace=? AND kind='donation' AND json_extract(data,'$.confirmed')=1 AND is_test=0 GROUP BY json_extract(data,'$.user') ORDER BY total DESC LIMIT 5").all(workspace).map(r=>[r.username,r.total]):[];
- res.json({polling:serverless,scene:config.scene,emergency:config.emergency,goalEnabled:!!config.goalEnabled,goal:config.goal,goalName:config.goalName,revenue:financial.revenue,characterVisible:!!config.characterVisible,character:config.character,characterArtworkId:config.characterArtworkId,overlayColor:config.overlayColor,overlayPosition:config.overlayPosition,countdownAt:config.countdownAt,ranking,current,quiz:list(workspace,'quiz')[0]||null});});
+ res.json({liveModel:activeModel(workspace)||null,polling:serverless,scene:config.scene,emergency:config.emergency,goalEnabled:!!config.goalEnabled,goal:config.goal,goalName:config.goalName,revenue:financial.revenue,characterVisible:!!config.characterVisible,character:config.character,characterArtworkId:config.characterArtworkId,overlayColor:config.overlayColor,overlayPosition:config.overlayPosition,countdownAt:config.countdownAt,ranking,current,quiz:list(workspace,'quiz')[0]||null});});
 function claim(workspace:string,req:Request,res:Response) {
  const v=z.object({id:z.string().uuid(),consumer:z.string().uuid()}).parse(req.body);
+ transaction(()=>{
  const result=db.prepare("UPDATE jobs SET claimed_by=? WHERE id=? AND workspace=? AND state='running' AND type='interaction' AND claimed_by IS NULL").run(v.consumer,v.id,workspace);
- if(!result.changes) fail('Ação já assumida por outro consumidor.',409);res.json({ok:true});
+ if(!result.changes) fail('Ação já assumida por outro consumidor.',409);applyModelJob(workspace,v.id);});res.json({ok:true});
 }
 function ack(workspace:string,req:Request,res:Response) {
  const v=z.object({id:z.string().uuid(),consumer:z.string().uuid(),error:z.string().max(250).optional()}).parse(req.body);
@@ -281,7 +287,7 @@ app.get('/api/connect/youtube/callback',requireAuth,async(req,res)=>{if(req.quer
 app.delete('/api/accounts/:id',requireAuth,owner,async(req,res)=>{const w=req.auth.workspace,id=String(req.params.id),a=get(w,'account',id);if(!a) fail('Conta não encontrada.',404);await revoke(w,a);remove(w,'account',id);res.json({ok:true});});
 app.patch('/api/accounts/:id/chat',requireAuth,mutate,(req,res)=>{const w=req.auth.workspace,id=String(req.params.id),a=get(w,'account',id);if(!a||a.platform!=='youtube'||a.isDemo||!a.tokens) fail('Conecte uma conta YouTube real para ler o chat.',409);res.json(publicAccount(put(w,'account',{chatEnabled:z.boolean().parse(req.body.enabled)},id)));});
 app.post('/api/lives',requireAuth,mutate,(req,res)=>{const data=z.object({title:z.string().min(1).max(100)}).parse(req.body);if(list(req.auth.workspace,'live').some(l=>l.status==='preview')) fail('Já existe uma sessão de prévia ativa.',409);res.status(201).json(put(req.auth.workspace,'live',{...data,status:'preview',startedAt:Date.now(),isDemo:req.auth.demo}));});
-app.patch('/api/lives/:id',requireAuth,mutate,(req,res)=>{const id=String(req.params.id);if(!get(req.auth.workspace,'live',id)) fail('Sessão não encontrada.',404);res.json(put(req.auth.workspace,'live',{status:z.enum(['preview','ended']).parse(req.body.status)},id));});
+app.patch('/api/lives/:id',requireAuth,mutate,(req,res)=>{const id=String(req.params.id);if(!get(req.auth.workspace,'live',id)) fail('Sessão não encontrada.',404);const status=z.enum(['preview','ended']).parse(req.body.status);if(status==='preview')fail('Crie uma nova sessão pela biblioteca para reiniciar.',409);res.json(transaction(()=>{stopModelJobs(req.auth.workspace,id);return put(req.auth.workspace,'live',{status,endedAt:Date.now()},id);}));});
 app.post('/api/quiz',requireAuth,mutate,(req,res)=>{const data=z.object({question:z.string().min(3).max(140),options:z.array(z.string().min(1).max(60)).length(3),correct:z.number().int().min(0).max(2)}).parse(req.body);const old=list(req.auth.workspace,'quiz')[0];res.json(put(req.auth.workspace,'quiz',{...data,round:randomUUID(),active:true,votes:[0,0,0]},old?.id));});
 app.post('/api/quiz/vote',requireAuth,(req,res)=>{const quiz=list(req.auth.workspace,'quiz')[0];if(!quiz?.active) fail('Nenhum quiz ativo.');const option=z.number().int().min(0).max(2).parse(req.body.option);const voter=req.auth.user||req.auth.workspace;const key=`${quiz.round}:${voter}`;if(list(req.auth.workspace,'vote').some(v=>v.key===key)) fail('Você já respondeu a este quiz.');transaction(()=>{put(req.auth.workspace,'vote',{key});quiz.votes[option]++;put(req.auth.workspace,'quiz',quiz,quiz.id);});res.json({correct:option===quiz.correct});});
 app.post('/api/team/invite',requireAuth,owner,(req,res)=>{if(req.auth.demo) fail('Crie uma conta para convidar sua equipe.');const v=z.object({email:z.email(),role:z.enum(['operator','moderator'])}).parse(req.body);const token=randomBytes(24).toString('hex');db.prepare('INSERT INTO one_time VALUES(?,?,?,?,?,?)').run(hash(token),req.auth.user,req.auth.workspace,'invite',JSON.stringify(v),Date.now()+7*86400000);res.json({url:origin+'/?invite='+token});});

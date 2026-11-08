@@ -53,3 +53,7 @@ O sistema não transmite vídeo por RTMP nem substitui o OBS. Integrações de L
 Foram salvos no rascunho do ambiente os domínios: `docs.livepix.gg`, `developers.google.com`, `developers.tiktok.com`, `developers.kwai.com`, `api.livepix.gg`, `oauth.livepix.gg`, `accounts.google.com`, `oauth2.googleapis.com`, `www.googleapis.com`. Os endpoints LivePix de leitura e autenticação foram conferidos no contrato oficial. Os testes locais não fazem chamadas com credenciais reais.
 
 Os acessos de gerenciamento do Supabase e Vercel foram validados por HTTPS, com credenciais protegidas do ambiente. Nenhuma credencial OAuth das plataformas foi configurada. Os scripts usam `NODE_USE_ENV_PROXY=1` para herdar o proxy e preservar a verificação TLS.
+
+## Modelos interativos e entrada de chat
+
+A biblioteca e o contrato para conectores externos estão documentados em [live-models.md](live-models.md). Os modelos 3D recebem pagamentos já confirmados pelo conector LivePix e mensagens aprovadas do YouTube ou de uma ponte de chat autenticada. A ponte TikTok/Kwai aceita somente mensagens; ela não acrescenta permissões ao Login Kit nem busca o chat por conta própria. Nenhum valor financeiro pode ser criado por essa entrada.

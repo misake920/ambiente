@@ -4,6 +4,7 @@ import '@fontsource-variable/inter';
 import './styles.css';
 import './professional.css';
 import './neon.css';
+import './live-models.css';
 import App from './App';
 import Overlay from './Overlay';
 const token=new URLSearchParams(location.search).get('overlay');
